@@ -1,0 +1,197 @@
+# 老登股推荐（Graham 防御型 → 四大师分析）
+
+把 **Graham 防御型选股** 筛出的"又便宜又稳"的股票，套用 **ai-berkshire 四大师框架**（巴菲特 / 芒格 / 段永平 / 李录）做深度分析总结，自动产出带产地（省·市）中性标注、三情景估值的 HTML 投研报告。
+
+> "老登股" = 低估值、高分红、经营稳健的成熟公司。Graham 防御型七条件筛出来的就是这一类。
+
+---
+
+## 一、这套东西怎么串起来的
+
+```
+① 筛选  (ashare-graham-screener)  →  A股防御型选股_YYYYMMDD_w<WIN><SUF>.xlsx（入选✓）
+        ↓
+② 分析  (本技能 analyze_selected.py)  →  analysis_cards.json + analysis_draft.md
+        ↓   Wind MCP 优先 / 公开接口兜底 / 产地省·市标注
+③ 报告  (本技能 gen_report.py)  →  Graham入选股_四大师分析_<日期>.html
+```
+
+- **① 筛选** 是另一个技能 `ashare-graham-screener`（同放在 `~/.workbuddy/skills/` 下），用 Graham 七条件精算。
+- **② ③ 分析与报告** 由本技能完成。
+- 一键脚本 `scripts/run_pipeline.py` 把三步串起来（详见第四节）。
+
+---
+
+## 二、目录结构
+
+```
+老登股推荐/
+├── SKILL.md                  # 技能说明（四大师分析协议、红线、数据源策略）
+├── README.md                 # 本文件
+├── LICENSE                   # MIT（注明第三方组件来源）
+├── scripts/
+│   ├── run_pipeline.py       # ★ 一键流水线（fetch/screen/analyze/report/all）
+│   ├── analyze_selected.py   # ② 数据卡：读 xlsx 入选股 → 实时行情/52周 + 三情景估值 + 产地省·市标注
+│   └── gen_report.py         # ③ 报告：读 analysis_cards.json → HTML
+├── tools/
+│   ├── ashare_data.py        # 腾讯行情 + 东方财富（公开接口，零依赖；Windows-GitBash 已适配）
+│   ├── financial_rigor.py    # 精确十进制三情景估值验算（stdlib）
+│   └── location.py           # 公司注册地省·市解析（仅标注用）
+└── wind_cache/               # 可选：Wind 预取样例（8 只）。没有 Wind MCP 可删除，不影响功能
+```
+
+> `tools/ashare_data.py` 与 `tools/financial_rigor.py` 源自 [ai-berkshire](https://github.com/xbtlin/ai-berkshire)（MIT），本技能复用其 A 股支持。
+
+---
+
+## 三、依赖
+
+| 阶段 | 需要什么 | 说明 |
+|------|----------|------|
+| 分析 + 报告（② ③） | Python 3 + 本技能 `tools/`（自带） | **零外部依赖**，开箱即用 |
+| 筛选 fetch（① 自动建池+抓数） | WorkBuddy 内置 `westock-data` / `westock-tool`（Node） | 仅 `fetch` / `all` 需要 |
+| Wind MCP | **可选** | 见第四节，没有也 100% 可用 |
+
+---
+
+## 四、一键运行（run_pipeline.py）
+
+脚本位置：`老登股推荐/scripts/run_pipeline.py`。用 Python 3 运行。
+
+### 场景 A：我**没有 Wind MCP**（最常见，也是默认值）✅
+
+你什么都不用装、不用配。直接分析已有的选股结果：
+
+```bash
+# 分析某个 Graham 选股 xlsx，只用公开接口（腾讯/东财）
+python run_pipeline.py analyze /path/to/A股防御型选股_20260722_w10_150w10.xlsx \
+       --out ./out --source public
+```
+
+- `--source public`：强制只用公开接口（腾讯行情 + 东方财富 52 周）。
+- 省略 `--source` 时默认 `auto`：有 `wind_cache/*.json` 就用 Wind，否则自动回退公开接口——**即使忘了加参数也不会卡**。
+- 不传 xlsx 时，会自动在「当前目录 / 技能 data」里找最新的 `A股防御型选股_*.xlsx`。
+
+### 场景 B：我有 westock（WorkBuddy 内置），想全自动从选股到报告
+
+```bash
+# 全自动：建池 + 抓数 + 筛选 + 分析 + 报告（Wind 仍可选，默认 auto 回退）
+python run_pipeline.py all --win 10 --mv 150 --rev 60 --out ./out
+```
+
+- `--win 10` 上市≥10 年（改 `5` 放宽到≥5 年）；`--mv 150` 市值≥150 亿；`--rev 60` 营收≥60 亿（中盘口径）。
+- `all` 内部自动跑 `fetch`（建中盘池+抓 raw）→ `screen` → `analyze` → `report`。
+- `fetch` 会向腾讯接口请求约 1600+ 只股票的多项数据，**首次可能要几分钟**，属正常。
+
+### 场景 C：只跑某一步
+
+```bash
+python run_pipeline.py fetch  --rev 60 --out ./out     # 只建池+抓 raw
+python run_pipeline.py screen --win 10 --mv 150 --rev 60 --out ./out   # 只筛选
+python run_pipeline.py analyze --out ./out --source auto               # 只分析+报告
+```
+
+---
+
+## 五、⚠️ 没有 Wind MCP 怎么办（重点说明）
+
+**结论：完全没有影响，零配置，照常用。**
+
+本技能的数据源优先级是：
+
+1. **Wind MCP（可选，优先）**：由带 Wind 连接器的 AI 预先把财务/估值拉进 `wind_cache/<code>.json`。
+2. **公开接口（兜底，必有用）**：腾讯行情（实时价/PE/PB）+ 东方财富（52 周高低），走 `tools/ashare_data.py`，**纯标准库、零依赖、不依赖任何连接器**。
+
+因此：
+
+- 没有 Wind MCP → 脚本自动只用公开接口，**结果照常产出**，只是财务精度以公开源为准（报告里用"归一化扣非 PE"作估值基准，避免单一源误导）。
+- `wind_cache/` 目录是**可选的 Wind 预取样例（8 只）**。你克隆下来后：
+  - 留着：对你这 8 只直接用里面的 Wind 数值；
+  - **删掉也行**：脚本会自动改用公开接口，功能不受影响。
+- 筛选阶段（`fetch`/`screen`）只用 westock 公开接口，**跟 Wind 毫无关系**。
+
+> 一句话：对方没装 Wind MCP，你只要 `python run_pipeline.py analyze 你的xlsx --source public` 即可，啥都不用管。
+
+---
+
+## 六、报告与免责声明
+
+报告含：横向对比总表（含**产地省·市**标注）、逐只六模块（段/巴/芒/李）、红线否决、三情景价格区间、组合行动清单。
+
+> ⚠️ 本报告为 **AI 框架化推理 + 机械估值模型输出，非投资建议**。定性部分（护城河/管理层/文明趋势）非一手调研；三情景目标价为估值模型结果，非收益预测。投资有风险，决策需独立判断。
+
+---
+
+## 七、开源与致谢
+
+- 本技能采用 **MIT 协议**（见 `LICENSE`）。
+- 核心分析框架与方法论来自 [ai-berkshire](https://github.com/xbtlin/ai-berkshire)（xbtlin，MIT）：巴菲特护城河 + 芒格逆向 + 段永平生意本质 + 李录文明趋势。
+- `tools/ashare_data.py`、`tools/financial_rigor.py` 为 ai-berkshire 原生工具，本技能仅做 Windows-GitBash 适配（curl 路径）与接入。
+
+如用于二次分发，请保留上述来源署名。
+
+---
+
+## 八、在其他 AI Agent 中使用
+
+本技能可以在任何支持 Python 3 的 AI Agent 环境中运行，不依赖 WorkBuddy 平台。
+
+### 前提条件
+
+1. **Python 3.8+**（脚本仅用标准库 + openpyxl）
+2. **Node.js**（仅 `fetch` / `all` 全自动模式需要，用于调用 westock）
+3. 已有 **Graham 选股结果 Excel**（由 `ashare-graham-screener` 或手动准备）
+
+### 最简用法（分析已有 Excel → 出报告）
+
+```bash
+# 1. 克隆本仓库
+git clone https://github.com/younglie777/ashare-laodeng.git
+cd ashare-laodeng
+
+# 2. 安装 openpyxl（唯一的外部依赖）
+pip install openpyxl
+
+# 3. 把你的 Graham 选股 xlsx 放进来，运行分析+出报告
+python scripts/run_pipeline.py analyze 你的选股.xlsx ./out --source public
+
+# 4. 报告在 ./out/Graham入选股_四大师分析_YYYYMMDD.html
+```
+
+### 在 Agent 工作流中集成
+
+如果你在开发自己的 AI Agent，可以把本技能作为**后处理模块**嵌入：
+
+```
+你的 Agent 主流程
+  │
+  ├─ 选股模块（任意方式，产出 xlsx 即可）
+  │     └─ 要求：xlsx 含「选股结果」sheet，含「是否入选」列（✓/True）
+  │
+  ├─ 【接入点】调用本技能
+  │     └─ python scripts/analyze_selected.py <xlsx> <输出目录> --source public
+  │     └─ python scripts/gen_report.py   （在输出目录中执行）
+  │
+  └─ 拿到 HTML 报告 → 展示给用户 / 进一步分析
+```
+
+关键约定：
+- `analyze_selected.py` 读 xlsx 的「选股结果」sheet，取「是否入选」= ✓ 的行。
+- 输出 `analysis_cards.json`（结构化数据）+ `analysis_draft.md`（草稿）。
+- `gen_report.py` 读 `analysis_cards.json` → 输出日期命名的 HTML 报告。
+- 所有路径均为相对路径，Agent 只需 `cwd` 设到输出目录即可。
+
+### 不用 WorkBuddy 也行吗？
+
+**完全可以。** 本技能的核心（`analyze_selected.py` + `gen_report.py` + `tools/`）是纯 Python，零平台依赖：
+
+| 组件 | 是否需要 WorkBuddy |
+|------|-------------------|
+| `analyze_selected.py` | ❌ 不需要 |
+| `gen_report.py` | ❌ 不需要 |
+| `tools/ashare_data.py` | ❌ 不需要（公开接口直连） |
+| `tools/financial_rigor.py` | ❌ 不需要（纯 stdlib） |
+| `tools/location.py` | ❌ 不需要（纯 stdlib） |
+| `run_pipeline.py fetch/screen` | ✅ 需要 westock（WorkBuddy 内置或自行安装） |
+
+所以：**分析 + 报告**在任何环境都能跑；**筛选**才需要 westock。
