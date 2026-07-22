@@ -6,8 +6,8 @@
 
 子命令
 ------
-  analyze  [xlsx路径]  [--out 目录] [--source auto|wind|public]
-        # 已有 Graham 选股 xlsx → 分析 + 报告（无需 westock / 无需 Wind）
+  analyze  [选股结果MD路径]  [--out 目录] [--source auto|wind|public]
+        # 已有 Graham 选股 MD → 分析 + 报告（无需 westock / 无需 Wind）
   screen   [--win 10] [--mv 150] [--rev 60] [--codes 候选.txt] [--raw raw目录] [--suffix _150]
         # 跑 Graham 筛选（需 raw/*.txt 已存在，见 fetch 或 README）
   fetch    [--rev 60] [--codes 候选.txt] [--raw raw目录] [--limit 8000] [--market hs]
@@ -184,29 +184,29 @@ def run_screen(args):
     cmd = [PY, GRAHAM, str(args.win), codes, raw, args.suffix or '',
            str(args.mv), str(args.rev), region]
     rc, out = run(cmd, cwd=work)
-    # 从末行 JSON 取 xlsx 名
-    xlsx = None
+    # 从末行 JSON 取 md 名
+    md = None
     for line in reversed(out.strip().split('\n')):
         line = line.strip()
         if line.startswith('{'):
             try:
-                xlsx = json.loads(line).get('excel')
+                md = json.loads(line).get('md')
             except Exception:
                 pass
             break
-    if not xlsx:
+    if not md:
         # 兜底：按命名规则猜
         ymd = datetime.date.today().strftime('%Y%m%d')
-        xlsx = f'A股防御型选股_{ymd}_w{args.win}{args.suffix or ""}.xlsx'
-    return os.path.join(work, xlsx)
+        md = f'A股防御型选股_{ymd}_w{args.win}{args.suffix or ""}.md'
+    return os.path.join(work, md)
 
 
-def run_analyze(xlsx, out_dir, source):
-    if not os.path.exists(xlsx):
-        print(f'❌ 找不到选股结果：{xlsx}')
+def run_analyze(md, out_dir, source):
+    if not os.path.exists(md):
+        print(f'❌ 找不到选股结果：{md}')
         sys.exit(1)
     os.makedirs(out_dir, exist_ok=True)
-    run([PY, ANALYZE, xlsx, out_dir, '--source', source])
+    run([PY, ANALYZE, md, out_dir, '--source', source])
     cards = os.path.join(out_dir, 'analysis_cards.json')
     if not os.path.exists(cards):
         print('❌ 分析未生成 analysis_cards.json，请检查 analyze_selected.py 报错。')
@@ -221,19 +221,19 @@ def run_report(out_dir):
 
 # ------------------------- 子命令 -------------------------
 def cmd_analyze(a):
-    xlsx = a.xlsx or find_xlsx(a.out)
-    if not xlsx:
-        print('❌ 未指定 xlsx，且当前目录/技能 data 下未找到 Graham 选股结果（*_w*_*.xlsx）。')
+    md = a.selection or find_md(a.out)
+    if not md:
+        print('❌ 未指定 md，且当前目录/技能 data 下未找到 Graham 选股结果（*_w*_*.md）。')
         sys.exit(1)
-    print(f'▶ 分析 + 报告：{xlsx}  (source={a.source})')
-    run_analyze(xlsx, a.out, a.source)
+    print(f'▶ 分析 + 报告：{md}  (source={a.source})')
+    run_analyze(md, a.out, a.source)
     run_report(a.out)
     print(f'✅ 完成。报告在：{a.out}')
 
 
 def cmd_screen(a):
-    xlsx = run_screen(a)
-    print(f'✅ 筛选完成：{xlsx}')
+    md = run_screen(a)
+    print(f'✅ 筛选完成：{md}')
 
 
 def cmd_fetch(a):
@@ -250,19 +250,19 @@ def cmd_all(a):
     raw = os.path.join(work, 'raw')
     fetch_universe(a.rev, codes, raw, 8000, 'hs')
     a.codes, a.raw = codes, raw
-    xlsx = run_screen(a)
-    run_analyze(xlsx, work, a.source)
+    md = run_screen(a)
+    run_analyze(md, work, a.source)
     run_report(work)
     print(f'✅ 全流程完成。报告在：{work}')
 
 
-def find_xlsx(dirs):
+def find_md(dirs):
     cands = []
     for d in dirs:
         if not os.path.isdir(d):
             continue
         for f in os.listdir(d):
-            if f.startswith('A股防御型选股_') and f.endswith('.xlsx'):
+            if f.startswith('A股防御型选股_') and f.endswith('.md'):
                 cands.append(os.path.join(d, f))
     cands.sort(key=os.path.getmtime, reverse=True)
     return cands[0] if cands else None
@@ -272,8 +272,9 @@ def build_parser():
     p = argparse.ArgumentParser(prog='run_pipeline', description='老登股推荐 一键流水线')
     sub = p.add_subparsers(dest='cmd')
 
-    pa = sub.add_parser('analyze', help='已有 xlsx → 分析+报告（无需 westock/Wind）')
-    pa.add_argument('xlsx', nargs='?', default=None)
+    pa = sub.add_parser('analyze', help='已有选股MD → 分析+报告（无需 westock/Wind）')
+    pa.add_argument('selection', nargs='?', default=None,
+                    help='Graham 选股结果 Markdown 路径（默认自动找最新 A股防御型选股_*.md）')
     pa.add_argument('--out', default=os.getcwd())
     pa.add_argument('--source', default='auto', choices=['auto', 'wind', 'public'])
     pa.set_defaults(func=cmd_analyze)

@@ -2,15 +2,15 @@
 # -*- coding: utf-8 -*-
 """老登股推荐 — 分析阶段数据准备。
 
-读取 Graham 选股 Excel 的「入选」股票，为每只补全：
+读取 Graham 选股 Markdown 中间产物的「入选」股票，为每只补全：
   1. westock 已算好的 Graham 七条件指标（PE/PB/近3年扣非PE/分红率/扣非EPS增长/市值/营收）
   2. ai-berkshire tools/ashare_data.py 实时行情 + 52周高低 + 推算总股本
   3. ai-berkshire tools/financial_rigor.py 三情景估值（精确十进制）
 产出 analysis_cards.json（供 AI 撰写四大师分析叙事）+ analysis_draft.md（数据卡草稿）。
 
 用法:
-  python3 analyze_selected.py [graham_excel.xlsx] [out_dir=.]
-  - 不选 Excel 时自动取当前目录最新 *_w*_*.xlsx
+  python3 analyze_selected.py [graham_选股.md] [out_dir=.]
+  - 不选时自动取当前目录最新 A股防御型选股_*.md
 """
 import json, os, re, sys, subprocess, datetime, shutil, glob as _glob
 
@@ -65,45 +65,71 @@ def westock_profile_addr(sym):
     return ''
 
 
-def find_excel(arg):
+def find_selection(arg):
     if arg and os.path.exists(arg):
         return arg
     import glob
-    cands = sorted(glob.glob('*_w*_*.xlsx'), reverse=True)
+    cands = sorted(glob.glob('A股防御型选股_*.md'), reverse=True)
     # 排除分析产物自身
     cands = [c for c in cands if 'analysis' not in c.lower()]
     return cands[0] if cands else None
 
 
-def read_selected(excel_path):
-    import openpyxl
-    wb = openpyxl.load_workbook(excel_path, data_only=True)
-    ws = wb['选股结果']
-    rows = list(ws.iter_rows(values_only=True))
-    head = [str(h).strip() for h in rows[0]]
+def read_selected(md_path):
+    """解析 Graham 选股 Markdown 中间产物，返回「是否入选=✓」的股票列表。"""
+    text = open(md_path, encoding='utf-8').read()
+    lines = text.split('\n')
+    # 定位 选股结果 表头行（含「代码」与「是否入选」）
+    header_i = None
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith('|') and '代码' in ln and '是否入选' in ln:
+            header_i = i
+            break
+    if header_i is None:
+        for i, ln in enumerate(lines):
+            if ln.lstrip().startswith('|') and '代码' in ln:
+                header_i = i
+                break
+    if header_i is None:
+        return []
+    head = [c.strip() for c in lines[header_i].strip().strip('|').split('|')]
     idx = {h: i for i, h in enumerate(head)}
+
+    def g(k):
+        i = idx.get(k)
+        return cells[i] if i is not None else None
+
+    def num(v):
+        v = (v or '').strip()
+        if v in ('', '-', '—', 'None'):
+            return None
+        try:
+            return float(v.replace(',', ''))
+        except Exception:
+            return None
+
     out = []
-    for r in rows[1:]:
-        if not r or r[0] is None:
+    for ln in lines[header_i + 2:]:  # 跳过表头与分隔行
+        if not ln.lstrip().startswith('|'):
             continue
-        passed = str(r[idx.get('是否入选', 18)] or '').strip()
+        cells = [c.strip() for c in ln.strip().strip('|').split('|')]
+        if len(cells) != len(head):
+            continue
+        passed = (g('是否入选') or '').strip()
         if passed not in ('✓', 'True', 'TRUE', '1'):
             continue
-        def g(k):
-            i = idx.get(k)
-            return r[i] if i is not None and i < len(r) else None
         out.append({
             'code': str(g('代码') or '').strip(),
             'name': str(g('名称') or '').strip(),
             'industry': str(g('申万行业') or '').strip(),
-            'prev_close': g('昨收价(元)'),
-            'mktcap_yi': g('总市值(亿)'),
-            'rev_yi': g('2025营收(亿)'),
-            'pe': g('PE(TTM)'),
-            'pb': g('PB'),
-            'pe3_kf': g('近3年扣非PE'),
-            'div_rate': g('近3平均分红率(%)'),
-            'eps_growth': g('扣非EPS增长(%)'),
+            'prev_close': num(g('昨收价(元)')),
+            'mktcap_yi': num(g('总市值(亿)')),
+            'rev_yi': num(g('2025营收(亿)')),
+            'pe': num(g('PE(TTM)')),
+            'pb': num(g('PB')),
+            'pe3_kf': num(g('近3年扣非PE')),
+            'div_rate': num(g('近3平均分红率(%)')),
+            'eps_growth': num(g('扣非EPS增长(%)')),
         })
     return out
 
@@ -260,14 +286,14 @@ def main():
         i = args.index('--source')
         SOURCE = args[i + 1]
         args = args[:i] + args[i + 2:]
-    excel = find_excel(args[0]) if args else None
-    if not excel:
-        print('❌ 未找到 Graham 选股 Excel（请传入路径或确保当前目录有 *_w*_*.xlsx）')
+    selection = find_selection(args[0]) if args else None
+    if not selection:
+        print('❌ 未找到 Graham 选股结果 Markdown（请传入路径或确保当前目录有 A股防御型选股_*.md）')
         sys.exit(1)
     out_dir = args[1] if len(args) > 1 else '.'
     os.makedirs(out_dir, exist_ok=True)
-    print(f'读取入选股: {excel} ｜ 数据源策略: {SOURCE}（Wind优先/公开兜底）')
-    selected = read_selected(excel)
+    print(f'读取入选股: {selection} ｜ 数据源策略: {SOURCE}（Wind优先/公开兜底）')
+    selected = read_selected(selection)
     print(f'Graham 入选 {len(selected)} 只: ' + ', '.join(s["name"] or s["code"] for s in selected))
     cards = [build_card(s) for s in selected]
     print(f'✅ 入选 {len(cards)} 只（仅按 Graham 条件，地域仅作省·市中性标注）')
@@ -275,7 +301,7 @@ def main():
     # 写 JSON
     json_path = os.path.join(out_dir, 'analysis_cards.json')
     with open(json_path, 'w', encoding='utf-8') as fh:
-        json.dump({'source_excel': os.path.abspath(excel),
+        json.dump({'source_md': os.path.abspath(selection),
                    'generated': datetime.date.today().strftime('%Y-%m-%d'),
                    'count': len(cards), 'cards': cards},
                   fh, ensure_ascii=False, indent=2)
@@ -284,7 +310,7 @@ def main():
     md_path = os.path.join(out_dir, 'analysis_draft.md')
     L = []
     L.append(f'# Graham 入选股 · 分析数据卡（{datetime.date.today().strftime("%Y-%m-%d")}）')
-    L.append(f'来源: {os.path.basename(excel)} ｜ Graham入选 {len(cards)} 只\n')
+    L.append(f'来源: {os.path.basename(selection)} ｜ Graham入选 {len(cards)} 只\n')
     L.append('')
     for c in cards:
         loc = f'{c.get("province")}·{c.get("city")}' if c.get('province') and c.get('city') and c.get('province') != c.get('city') else (c.get('province') or c.get('city') or '—')
