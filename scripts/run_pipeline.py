@@ -119,11 +119,11 @@ def preflight_check(need_westock=True, source='public'):
             issues.append('未检测到 Node.js（westock 依赖 Node 运行）')
             tips.append('安装 Node.js 18+：https://nodejs.org ；装完后终端执行 `node -v` 能出版本号即成功')
         if not find_westock():
-            issues.append('未找到 westock 数据组件（westock-data / westock-tool）')
-            tips.append('需要「westock-data」与「westock-tool」两个数据组件（本技能靠它们拉 A 股行情/财务）：'
-                        '① 若用 WorkBuddy：在技能面板搜索并「启用」内置的 westock-data、westock-tool 即可；'
-                        '② 其他 Agent / 环境：用 npm 安装（或克隆其仓库）westock-data 与 westock-tool，'
-                        '把各自的 scripts/index.js 路径分别设到环境变量 WESTOCK_DATA、WESTOCK_TOOL（或加入 PATH），脚本会自动探测。')
+            issues.append('未找到行情/财务数据组件（westock-data / westock-tool 或 Wind MCP）')
+            tips.append('需要 A 股行情/财务数据。建议优先通过 MCP 接入：在 WorkBuddy 启用「Wind MCP」等行情/财务类连接器即可；'
+                        '若用 WorkBuddy 内置技能：在技能面板启用 westock-data、westock-tool；'
+                        '其他 Agent / 环境：用 npm 安装（或克隆其仓库）westock-data 与 westock-tool，'
+                        '把各自的 scripts/index.js 路径设到环境变量 WESTOCK_DATA、WESTOCK_TOOL（或加入 PATH），脚本会自动探测。')
     if source == 'wind':
         tips.append('⚠️ 你指定了 --source wind，请确保 Wind MCP 已连接；否则改用 --source public 走公开接口')
     return issues, tips
