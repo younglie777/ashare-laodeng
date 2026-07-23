@@ -20,6 +20,9 @@ python scripts/run_pipeline.py all --win 10 --mv 150 --rev 60 --out ./out --sour
 ```
 只分析已有选股：`python scripts/run_pipeline.py analyze 你的选股.md ./out --source public`
 
+## 兼容性
+本技能不绑定任何平台：任何能运行 Python 3 + Node.js 的 AI Agent（WorkBuddy、Claude、Cursor、通用命令行 Agent 等）都能直接调用，缺依赖时运行会自动自检并给出安装指引，补齐后重跑即可。
+
 ## 缺依赖会怎样
 运行自动检测环境。缺 Node / 数据组件时，会打印缺什么 + 怎么装（含 Wind MCP / npm 两种方式），补齐后重跑同一条命令即继续。
 
