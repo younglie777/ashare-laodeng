@@ -119,22 +119,28 @@ def preflight_check(need_westock=True, source='public'):
             issues.append('未检测到 Node.js（westock 依赖 Node 运行）')
             tips.append('安装 Node.js 18+：https://nodejs.org ；装完后终端执行 `node -v` 能出版本号即成功')
         if not find_westock():
-            issues.append('未找到 WorkBuddy 内置技能 westock-data / westock-tool')
-            tips.append('在 WorkBuddy 技能面板搜索并「启用」westock-data 与 westock-tool 两个内置技能'
-                        '（随 WorkBuddy 自带，只需启用即可，无需额外安装）')
+            issues.append('未找到 westock 数据组件（westock-data / westock-tool）')
+            tips.append('需要「westock-data」与「westock-tool」两个数据组件（本技能靠它们拉 A 股行情/财务）：'
+                        '① 若用 WorkBuddy：在技能面板搜索并「启用」内置的 westock-data、westock-tool 即可；'
+                        '② 其他 Agent / 环境：用 npm 安装（或克隆其仓库）westock-data 与 westock-tool，'
+                        '把各自的 scripts/index.js 路径分别设到环境变量 WESTOCK_DATA、WESTOCK_TOOL（或加入 PATH），脚本会自动探测。')
     if source == 'wind':
         tips.append('⚠️ 你指定了 --source wind，请确保 Wind MCP 已连接；否则改用 --source public 走公开接口')
     return issues, tips
 
 
 def run_preflight(need_westock, source):
-    """打印自检结果。通过返回 True；不通过打印指引并返 False（调用方应 sys.exit(1)）。"""
+    """打印自检结果。通过返回 True；不通过打印指引并返 False（调用方应 sys.exit(1)）。
+
+    额外打印一行机器可读标记 `>>> PREFLEFT: ok|fail`，便于任意 Agent 解析成败。
+    """
     issues, tips = preflight_check(need_westock, source)
     print('🔍 运行前环境自检（前置依赖）...')
     if not issues:
         print('   ✅ 前置依赖齐全，可以继续。')
         if source != 'wind':
             print('   ℹ️ Wind MCP 未连接 → 自动使用公开接口（腾讯行情 + 东方财富），无需配置。')
+        print('>>> PREFLEFT: ok')
         return True
     print('   ❌ 环境自检未通过，缺失以下前置：')
     for i in issues:
@@ -142,6 +148,7 @@ def run_preflight(need_westock, source):
     print('   请按以下指引补齐后，重新运行本命令即可继续：')
     for t in tips:
         print(f'     → {t}')
+    print(f'>>> PREFLEFT: fail | missing={",".join(issues)}')
     return False
 
 
