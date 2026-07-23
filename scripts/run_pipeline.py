@@ -33,8 +33,19 @@ import os, sys, json, shutil, glob, subprocess, datetime, argparse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SKILL_DIR = os.path.dirname(SCRIPT_DIR)
-SCREENER_DIR = os.path.join(os.path.dirname(SKILL_DIR), 'ashare-graham-screener')
-GRAHAM = os.path.join(SCREENER_DIR, 'scripts', 'graham_westock.py')
+# Graham 筛选器：优先用本仓库内置打包副本（单仓即可跑），
+# 找不到时回退到兄弟技能 ashare-graham-screener（保持向后兼容）
+SIBLING_SCREENER = os.path.join(os.path.dirname(SKILL_DIR), 'ashare-graham-screener')
+LOCAL_SCREENER = os.path.join(SCRIPT_DIR, 'graham_westock.py')
+GRAHAM = LOCAL_SCREENER if os.path.exists(LOCAL_SCREENER) else os.path.join(SIBLING_SCREENER, 'scripts', 'graham_westock.py')
+
+
+def _default_data(name):
+    """codes.txt / raw 默认路径：优先本仓库 data/，回退兄弟技能 data/。"""
+    local = os.path.join(SKILL_DIR, 'data', name)
+    if os.path.exists(local):
+        return local
+    return os.path.join(SIBLING_SCREENER, 'data', name)
 ANALYZE = os.path.join(SCRIPT_DIR, 'analyze_selected.py')
 GEN_REPORT = os.path.join(SCRIPT_DIR, 'gen_report.py')
 PY = sys.executable
@@ -93,6 +104,47 @@ def find_westock():
     return None
 
 
+# ------------------------- 运行前环境自检（前置依赖） -------------------------
+def preflight_check(need_westock=True, source='public'):
+    """运行前自检。返回 (issues, tips)。
+    need_westock=False（analyze 模式）时跳过 Node/westock 检查。
+    """
+    issues, tips = [], []
+    # Python 版本（脚本本身能跑起来说明至少有 3.x，这里给温和提示）
+    if sys.version_info < (3, 8):
+        issues.append('Python 版本过低（需 3.8+，推荐 3.10+）')
+        tips.append('下载安装 Python 3.10+：https://www.python.org/downloads/')
+    if need_westock:
+        if not find_node():
+            issues.append('未检测到 Node.js（westock 依赖 Node 运行）')
+            tips.append('安装 Node.js 18+：https://nodejs.org ；装完后终端执行 `node -v` 能出版本号即成功')
+        if not find_westock():
+            issues.append('未找到 WorkBuddy 内置技能 westock-data / westock-tool')
+            tips.append('在 WorkBuddy 技能面板搜索并「启用」westock-data 与 westock-tool 两个内置技能'
+                        '（随 WorkBuddy 自带，只需启用即可，无需额外安装）')
+    if source == 'wind':
+        tips.append('⚠️ 你指定了 --source wind，请确保 Wind MCP 已连接；否则改用 --source public 走公开接口')
+    return issues, tips
+
+
+def run_preflight(need_westock, source):
+    """打印自检结果。通过返回 True；不通过打印指引并返 False（调用方应 sys.exit(1)）。"""
+    issues, tips = preflight_check(need_westock, source)
+    print('🔍 运行前环境自检（前置依赖）...')
+    if not issues:
+        print('   ✅ 前置依赖齐全，可以继续。')
+        if source != 'wind':
+            print('   ℹ️ Wind MCP 未连接 → 自动使用公开接口（腾讯行情 + 东方财富），无需配置。')
+        return True
+    print('   ❌ 环境自检未通过，缺失以下前置：')
+    for i in issues:
+        print(f'     • {i}')
+    print('   请按以下指引补齐后，重新运行本命令即可继续：')
+    for t in tips:
+        print(f'     → {t}')
+    return False
+
+
 def parse_codes(text):
     """从 westock-tool filter 的 markdown 表解析首列 code（如 sz002410）。"""
     lines = [l for l in text.split('\n') if l.strip().startswith('|')]
@@ -138,22 +190,27 @@ def fetch_universe(rev, codes_file, raw_dir, limit, market):
     print(f'   候选 {len(codes)} 只 → {codes_file}')
 
     # 2) 抓 raw（分块，避免单次请求过大）
+    # codes_first=True 表示 westock-data 要求代码放在 --type/--num 等旗标之前
+    # （finance 子命令的特殊约定；profile/quote/dividend 则代码放最后即可）
     jobs = [
-        ('profile', ['profile'], 'pro.txt'),
-        ('quote', ['quote'], 'quo.txt'),
-        ('finance lrb', ['finance', '--type', 'lrb', '--num', '48'], 'fin_lrb.txt'),
-        ('finance zcfz', ['finance', '--type', 'zcfz', '--num', '48'], 'fin_zcfz.txt'),
-        ('dividend', ['dividend', 'list', '--years', '12'], 'div.txt'),
+        ('profile', ['profile'], 'pro.txt', False),
+        ('quote', ['quote'], 'quo.txt', False),
+        ('finance lrb', ['finance', '--type', 'lrb', '--num', '48'], 'fin_lrb.txt', True),
+        ('finance zcfz', ['finance', '--type', 'zcfz', '--num', '48'], 'fin_zcfz.txt', True),
+        ('dividend', ['dividend', 'list', '--years', '12'], 'div.txt', False),
     ]
     chunk = 150
-    for label, sub, fname in jobs:
+    for label, sub, fname, codes_first in jobs:
         path = os.path.join(raw_dir, fname)
         print(f'② 抓 {label} → {fname}（分块 {chunk}/批）...')
         with open(path, 'w', encoding='utf-8') as fh:
             for i in range(0, len(codes), chunk):
                 batch = codes[i:i + chunk]
-                rc, out = run([node, data_js] + sub + [','.join(batch)],
-                              capture=True, silent=True)
+                if codes_first:
+                    cmd = [node, data_js] + sub[:1] + [','.join(batch)] + sub[1:]
+                else:
+                    cmd = [node, data_js] + sub + [','.join(batch)]
+                rc, out = run(cmd, capture=True, silent=True)
                 if rc == 0 and out.strip():
                     fh.write(out + '\n')
                 else:
@@ -167,8 +224,8 @@ def run_screen(args):
         print(f'❌ 未找到筛选脚本：{GRAHAM}')
         print('   老登股推荐 与 ashare-graham-screener 需为同级技能目录（都在 ~/.workbuddy/skills/ 下）。')
         sys.exit(1)
-    codes = args.codes or os.path.join(SCREENER_DIR, 'data', 'codes.txt')
-    raw = args.raw or os.path.join(SCREENER_DIR, 'data', 'raw')
+    codes = args.codes or _default_data('codes.txt')
+    raw = args.raw or _default_data('raw')
     if not os.path.exists(codes):
         print(f'❌ 候选代码文件不存在：{codes}')
         print('   先跑 fetch，或按 README 手动准备 codes.txt。')
@@ -221,6 +278,8 @@ def run_report(out_dir):
 
 # ------------------------- 子命令 -------------------------
 def cmd_analyze(a):
+    if not run_preflight(need_westock=False, source=a.source):
+        sys.exit(1)
     md = a.selection or find_md(a.out)
     if not md:
         print('❌ 未指定 md，且当前目录/技能 data 下未找到 Graham 选股结果（*_w*_*.md）。')
@@ -232,17 +291,23 @@ def cmd_analyze(a):
 
 
 def cmd_screen(a):
+    if not run_preflight(need_westock=True, source='public'):
+        sys.exit(1)
     md = run_screen(a)
     print(f'✅ 筛选完成：{md}')
 
 
 def cmd_fetch(a):
-    fetch_universe(a.rev, a.codes or os.path.join(SCREENER_DIR, 'data', 'codes.txt'),
-                  a.raw or os.path.join(SCREENER_DIR, 'data', 'raw'),
+    if not run_preflight(need_westock=True, source='public'):
+        sys.exit(1)
+    fetch_universe(a.rev, a.codes or _default_data('codes.txt'),
+                  a.raw or _default_data('raw'),
                   a.limit, a.market)
 
 
 def cmd_all(a):
+    if not run_preflight(need_westock=True, source=a.source):
+        sys.exit(1)
     print('▶ 全自动流水线：fetch → screen → analyze → report')
     work = a.out
     os.makedirs(work, exist_ok=True)
@@ -303,6 +368,7 @@ def build_parser():
     pl.add_argument('--rev', type=float, default=60.0)
     pl.add_argument('--out', default=os.getcwd())
     pl.add_argument('--source', default='auto', choices=['auto', 'wind', 'public'])
+    pl.add_argument('--suffix', default='')
     pl.set_defaults(func=cmd_all)
     return p
 

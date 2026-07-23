@@ -143,8 +143,8 @@ for c, n in rows:
         <div>
           <div class="pricebox">
             <div class="row"><span>现价</span><b>{c.get('price_used')}</b></div>
-            <div class="row"><span>PE(TTM, Wind)</span><span>{("%.2f"%pe) if pe else "—"}</span></div>
-            <div class="row"><span>PB(Wind)</span><span>{("%.2f"%pb) if pb else "—"}</span></div>
+            <div class="row"><span>PE(TTM, 公开)</span><span>{("%.2f"%pe) if pe else "—"}</span></div>
+            <div class="row"><span>PB(公开)</span><span>{("%.2f"%pb) if pb else "—"}</span></div>
             <div class="row"><span>ROE</span><span>{("%.2f%%"%rt.get('roe')) if rt.get('roe') is not None else "—"}</span></div>
             <div class="row"><span>52周区间</span><span>{c.get('h52_low')} ~ {c.get('h52')}</span></div>
             <div class="row"><span>52周位置</span><b>{("%.1f%%"%pos) if pos is not None else "—"}</b></div>
@@ -174,25 +174,27 @@ for c, n in rows:
       <p style="text-align:right;margin:6px 0 0"><span class="pill {n.get('vcls','p-watch')}">综合：{n.get('verdict','—')}</span></p>
     </div>'''
 
-# 行动清单
-action = [
- ('国药股份(北京)','建议关注·核心仓','麻精牌照护城河+ROE11%+分红30%，确定性最高'),
- ('长江传媒(武汉)','防御首选·关注','教材区域垄断+近50%分红+52周18%低位，压舱石'),
- ('南山铝业(烟台)','关注·分批','航空铝材认证壁垒，PB≈1.27、52周20%低位'),
- ('三角轮胎(威海)','关注','PB 0.83 深度破净，出口轮胎全球份额提升'),
- ('老凤祥(上海)','关注','老字号+金价上行，52周17.6%低位'),
- ('亚太科技(无锡)','小盘轻仓','52周1.7%近最低+分红84.7%，流动性小'),
- ('国药现代(上海)','小仓/观望','化药护城河窄、PE组内偏高'),
- ('长春高新(长春)','观望·待利空出清','等2025减值年报落地+集采明朗再定'),
-]
-action_rows = ''.join(f'<tr><td class="name">{a}</td><td>{b}</td><td class="left">{d}</td></tr>' for a,b,d in action)
+# 行动清单：从【今日入选股】动态生成，避免与总表/卡片不一致
+def action_reason(n):
+    moat = (n.get('moat', '') or '').split('；')[0].split('。')[0]
+    if len(moat) > 46:
+        moat = moat[:46] + '…'
+    return moat or '—'
+
+action_rows = ''
+for c, n in rows:
+    prov, city = c.get('province'), c.get('city')
+    loc = city if prov == city else f'{prov}·{city}'
+    nm = f"{c['name']}({loc})"
+    verdict = n.get('verdict', '—')
+    action_rows += f'<tr><td class="name">{nm}</td><td>{verdict}</td><td class="left">{action_reason(n)}</td></tr>'
 
 html = f'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Graham 入选股 · 四大师分析总结（2026-07-22 · Wind优先 · 含产地省·市标注）</title>
+<title>Graham 入选股 · 四大师分析总结（公开接口 · 含产地省·市标注）</title>
 <style>
   :root{{--bg:#f7f8fa;--panel:#fff;--ink:#1c2630;--sub:#5b6b7a;--line:#e6eaf0;
     --navy:#13263f;--accent:#1f6feb;--up:#d6342c;--down:#1aa053;--warn:#b8860b;
@@ -242,9 +244,9 @@ html = f'''<!DOCTYPE html>
 <div class="wrap">
 <header class="hero">
   <h1>Graham 防御型入选股 · 四大师分析总结</h1>
-  <div class="meta">生成日 2026-07-22 ｜ 数据源 <b>Wind MCP 优先</b> + 腾讯行情/东方财富兜底（不强制）｜ 方法论：ai-berkshire 四大师框架（段永平·巴菲特·芒格·李录）｜ 地域仅作产地（省·市）中性标注</div>
+  <div class="meta">生成日 2026-07-22 ｜ 数据源 <b>公开接口（腾讯自选股 + 东方财富）</b>（Wind 未连接，自动回退）｜ 方法论：ai-berkshire 四大师框架（段永平·巴菲特·芒格·李录）｜ 地域仅作产地（省·市）中性标注</div>
   <div class="badges">
-    <span class="badge wind">数据源：Wind 优先 · 公开兜底</span>
+    <span class="badge wind">数据源：公开接口（腾讯/东财）</span>
     <span class="badge">Graham 入选 <b>{len(cards)} 只</b></span>
     <span class="badge">硬红线触发：0 条</span>
     <span class="badge">信息丰富度评级：B</span>
@@ -252,11 +254,11 @@ html = f'''<!DOCTYPE html>
 </header>
 
 <div class="disclaimer">
-  <b>数据源与口径声明：</b>财务/估值字段（PE/PB/ROE/股息率）<b>优先取自 Wind MCP</b>（机构级、归一化口径），实时价与 52 周高低由公开接口（腾讯自选股 + 东方财富）补充；Wind 不可用时自动回退公开接口，不阻塞。Wind 与公开接口 PE/PB 常因口径/时点不同而有差异（如长春高新 Wind PE 39.4 vs 腾讯 −752 vs 归一化扣非 12.3），本报告以<b>归一化扣非 PE</b> 作估值基准。定性判断（护城河/管理层/文明趋势）为 AI 基于公开信息的框架化推理，<b>非一手调研</b>；三情景为机械估值模型输出，<b>非收益预测，不构成投资建议</b>。颜色遵循 A 股惯例：<span class="up">红=上涨/上行空间</span>、绿=下跌。所有入选股一视同仁，地域仅作产地（省·市）客观标注，不参与任何偏好或剔除。
+  <b>数据源与口径声明：</b>估值字段（PE/PB/ROE/股息率/52周高低）全部来自<b>公开接口</b>（腾讯自选股 + 东方财富），实时性以接口返回为准；Wind MCP 当前未连接，本报告不依赖 Wind。公开接口 PE/PB 与财报口径偶有差异（如一次性减值致 TTM PE 异常），本报告统一以<b>归一化近3年扣非 PE</b> 作估值基准，规避失真。定性判断（护城河/管理层/文明趋势）为 AI 基于公开信息的框架化推理，<b>非一手调研</b>；三情景为机械估值模型输出，<b>非收益预测，不构成投资建议</b>。颜色遵循 A 股惯例：<span class="up">红=上涨/上行空间</span>、绿=下跌。所有入选股一视同仁，地域仅作产地（省·市）客观标注，不参与任何偏好或剔除。
 </div>
 
 <section>
-  <h2><span class="tag">总表</span>一、入选股横向对比（PE/PB 取 Wind 优先 · 含产地省·市）</h2>
+  <h2><span class="tag">总表</span>一、入选股横向对比（PE/PB 取公开接口 · 含产地省·市）</h2>
   <table>
     <thead><tr>
       <th>标的</th><th>产地（省·市）</th><th>行业</th><th>现价*</th><th>PE(Wind)</th><th>PB(Wind)</th><th>ROE</th>
@@ -264,7 +266,7 @@ html = f'''<!DOCTYPE html>
     </tr></thead>
     <tbody>{tot_rows}</tbody>
   </table>
-  <p class="legend">* 现价与 52 周位置来自公开接口（腾讯/东财）实时补充；PE/PB/ROE/分红率优先 Wind。"产地"列为公司注册地（省·市），仅作客观标注。</p>
+  <p class="legend">* 现价、52周位置、PE/PB/ROE/分红率均来自公开接口（腾讯/东财）实时数据。"产地"列为公司注册地（省·市），仅作客观标注。</p>
 </section>
 
 <section>
@@ -282,7 +284,7 @@ html = f'''<!DOCTYPE html>
 </section>
 
 <div class="foot">
-  数据源：Wind MCP（优先）+ 腾讯自选股 / 东方财富（兜底）｜ 筛选：Graham 防御型 7 条件（10年窗口 / 中盘 150亿·60亿口径）<br>
+  数据源：公开接口（腾讯自选股 / 东方财富）｜ 筛选：Graham 防御型 7 条件（10年窗口 / 中盘 150亿·60亿口径）<br>
   地域仅作产地（省·市）中性标注，不参与筛选或剔除 ｜ 生成：老登股推荐（自动）<br>
   ⚠️ 本报告为 AI 框架化推理 + 机械估值，非投资建议；投资有风险，决策需独立判断。
 </div>
