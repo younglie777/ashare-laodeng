@@ -8,11 +8,11 @@
 ------
   analyze  [选股结果MD路径]  [--out 目录] [--source auto|wind|public]
         # 已有 Graham 选股 MD → 分析 + 报告（无需 westock / 无需 Wind）
-  screen   [--win 10] [--mv 150] [--rev 60] [--codes 候选.txt] [--raw raw目录] [--suffix _150]
+  screen   [--win 5] [--mv 150] [--rev 60] [--codes 候选.txt] [--raw raw目录] [--suffix _150]
         # 跑 Graham 筛选（需 raw/*.txt 已存在，见 fetch 或 README）
   fetch    [--rev 60] [--codes 候选.txt] [--raw raw目录] [--limit 8000] [--market hs]
         # 用 WorkBuddy 内置 westock 自动建中盘池 + 抓取 raw（需 westock 内置 skill + node）
-  all      [--win 10] [--mv 150] [--rev 60] [--out 目录] [--source auto]
+  all      [--win 5] [--mv 150] [--rev 60] [--out 目录] [--source auto]
         # fetch + screen + analyze + report 全自动（需 westock；Wind 可选）
 
 关于 Wind MCP（重点）
@@ -29,7 +29,7 @@
   - 分析/报告：仅 Python3 + 本技能自带 tools/（零外部依赖）
   - 筛选 fetch：WorkBuddy 内置 westock-data / westock-tool（Node）
 """
-import os, sys, json, shutil, glob, subprocess, datetime, argparse
+import os, sys, json, re, shutil, glob, subprocess, datetime, argparse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SKILL_DIR = os.path.dirname(SCRIPT_DIR)
@@ -206,7 +206,10 @@ def fetch_universe(rev, codes_file, raw_dir, limit, market):
         ('finance zcfz', ['finance', '--type', 'zcfz', '--num', '48'], 'fin_zcfz.txt', True),
         ('dividend', ['dividend', 'list', '--years', '12'], 'div.txt', False),
     ]
-    chunk = 150
+    # 注意：westock-data 单次调用输出有长度上限，chunk=150 时每批实际只返回
+    # 约 55~70 只的完整数据（batch 状态仍报 success），导致 div/zcfz 大面积缺失、
+    # Graham 筛选全军覆没。实测 chunk<=40 可完整返回。可用环境变量 WESTOCK_CHUNK 覆盖。
+    chunk = int(os.environ.get('WESTOCK_CHUNK', '40'))
     for label, sub, fname, codes_first in jobs:
         path = os.path.join(raw_dir, fname)
         print(f'② 抓 {label} → {fname}（分块 {chunk}/批）...')
@@ -220,6 +223,10 @@ def fetch_universe(rev, codes_file, raw_dir, limit, market):
                 rc, out = run(cmd, capture=True, silent=True)
                 if rc == 0 and out.strip():
                     fh.write(out + '\n')
+                    # 覆盖度自检：返回文本中出现的代码数若明显少于请求数，提示截断
+                    got = len(set(re.findall(r'\b(?:sh|sz|bj)\d{6}\b', out)) & set(batch))
+                    if got < len(batch) * 0.9:
+                        print(f'   ⚠ 第 {i // chunk + 1} 批疑似截断：请求 {len(batch)} 只，返回 {got} 只（建议调小 WESTOCK_CHUNK）')
                 else:
                     print(f'   ⚠ 第 {i // chunk + 1} 批失败，跳过')
         print(f'   ✓ {path}')
@@ -352,7 +359,7 @@ def build_parser():
     pa.set_defaults(func=cmd_analyze)
 
     ps = sub.add_parser('screen', help='跑 Graham 筛选（需 raw/*.txt）')
-    ps.add_argument('--win', type=int, default=10)
+    ps.add_argument('--win', type=int, default=5)  # 用户偏好：默认5年(原10年太苛刻)
     ps.add_argument('--mv', type=float, default=150.0)
     ps.add_argument('--rev', type=float, default=60.0)
     ps.add_argument('--codes', default=None)
@@ -370,7 +377,7 @@ def build_parser():
     pf.set_defaults(func=cmd_fetch)
 
     pl = sub.add_parser('all', help='全自动（需 westock；Wind 可选）')
-    pl.add_argument('--win', type=int, default=10)
+    pl.add_argument('--win', type=int, default=5)  # 用户偏好：默认5年(原10年太苛刻)
     pl.add_argument('--mv', type=float, default=150.0)
     pl.add_argument('--rev', type=float, default=60.0)
     pl.add_argument('--out', default=os.getcwd())
