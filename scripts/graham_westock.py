@@ -4,12 +4,12 @@
 
 流程: westock-tool filter 粗筛 -> westock-data 批量拉取(finance/quote/dividend/profile, markdown)
        -> 解析 -> 7条条件精算 -> Markdown(中间产物统一 MD，省 token、易解析)
-数据源: 腾讯自选股(westock) 公开接口；财务=近 WIN 个完整年报（默认5年 2021-2025）。
+数据源: 腾讯自选股(westock) 公开接口；财务=近 WIN 个完整年报（默认10年 2016-2025）。
 产出: A股防御型选股_YYYYMMDD_w<WIN><OUT_SUF>.md + JSON 摘要(打印末行)。
 
 用法:
-  python3 graham_westock.py <WIN=5> [codes_file] [raw_dir] [out_suffix] [mv_gate=150] [rev_gate=60]
-    WIN       时间窗口年数（默认5；用户2026-07-22提出、07-31重申：连续10年太苛刻，放宽到5年）
+  python3 graham_westock.py <WIN=10> [codes_file] [raw_dir] [out_suffix] [mv_gate=150] [rev_gate=60]
+    WIN       时间窗口年数（默认10；Graham原教旨：连续10年扣非全正+连续10年分红+10年盈利增长≥1/3；2026-07-31用户确认回到10年）
     codes_file 候选代码列表(每行一个 sh/sz 代码)；默认 <skill>/data/codes.txt
     raw_dir    westock-data 拉取的原始 markdown 目录；默认 <skill>/data/raw
     out_suffix 输出文件名后缀（避免覆盖）；默认 ''
@@ -22,8 +22,8 @@ import region_filter  # 地域闸门(北方非省会/前二城市剔除)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'data')
 
-# 用法: python graham_westock.py <WIN=5> [codes_file] [raw_dir] [out_suffix] [mv_gate=150] [rev_gate=60]
-WIN = int(sys.argv[1]) if len(sys.argv) > 1 else 5  # 默认5年：用户(2026-07-22提,07-31重申)认为连续10年太苛刻
+# 用法: python graham_westock.py <WIN=10> [codes_file] [raw_dir] [out_suffix] [mv_gate=150] [rev_gate=60]
+WIN = int(sys.argv[1]) if len(sys.argv) > 1 else 10  # 默认10年：Graham原教旨；2026-07-31用户确认回到10年（5年窗口会把盈利增长对比基期前移反而更严，故退回10年）
 CODES_FILE = sys.argv[2] if len(sys.argv) > 2 else os.path.join(DATA_DIR, 'codes.txt')
 BASE = sys.argv[3] if len(sys.argv) > 3 else os.path.join(DATA_DIR, 'raw')
 OUT_SUF = sys.argv[4] if len(sys.argv) > 4 else ''

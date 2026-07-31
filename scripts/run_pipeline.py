@@ -8,11 +8,11 @@
 ------
   analyze  [选股结果MD路径]  [--out 目录] [--source auto|wind|public]
         # 已有 Graham 选股 MD → 分析 + 报告（无需 westock / 无需 Wind）
-  screen   [--win 5] [--mv 150] [--rev 60] [--codes 候选.txt] [--raw raw目录] [--suffix _150]
+  screen   [--win 10] [--mv 150] [--rev 60] [--codes 候选.txt] [--raw raw目录] [--suffix _150]
         # 跑 Graham 筛选（需 raw/*.txt 已存在，见 fetch 或 README）
   fetch    [--rev 60] [--codes 候选.txt] [--raw raw目录] [--limit 8000] [--market hs]
         # 用 WorkBuddy 内置 westock 自动建中盘池 + 抓取 raw（需 westock 内置 skill + node）
-  all      [--win 5] [--mv 150] [--rev 60] [--out 目录] [--source auto]
+  all      [--win 10] [--mv 150] [--rev 60] [--out 目录] [--source auto]
         # fetch + screen + analyze + report 全自动（需 westock；Wind 可选）
 
 关于 Wind MCP（重点）
@@ -359,7 +359,7 @@ def build_parser():
     pa.set_defaults(func=cmd_analyze)
 
     ps = sub.add_parser('screen', help='跑 Graham 筛选（需 raw/*.txt）')
-    ps.add_argument('--win', type=int, default=5)  # 用户偏好：默认5年(原10年太苛刻)
+    ps.add_argument('--win', type=int, default=10)  # 默认10年：Graham原教旨；2026-07-31用户确认回到10年
     ps.add_argument('--mv', type=float, default=150.0)
     ps.add_argument('--rev', type=float, default=60.0)
     ps.add_argument('--codes', default=None)
@@ -377,7 +377,7 @@ def build_parser():
     pf.set_defaults(func=cmd_fetch)
 
     pl = sub.add_parser('all', help='全自动（需 westock；Wind 可选）')
-    pl.add_argument('--win', type=int, default=5)  # 用户偏好：默认5年(原10年太苛刻)
+    pl.add_argument('--win', type=int, default=10)  # 默认10年：Graham原教旨；2026-07-31用户确认回到10年
     pl.add_argument('--mv', type=float, default=150.0)
     pl.add_argument('--rev', type=float, default=60.0)
     pl.add_argument('--out', default=os.getcwd())
