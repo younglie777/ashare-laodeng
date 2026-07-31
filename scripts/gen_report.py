@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """根据 analysis_cards.json 生成四大师分析 HTML 报告。
-规则：所有入选股一律中性标注产地（省·市）；不按地域做任何偏好或剔除。"""
+规则：所有入选股记录登记地（省·市）作为参考信息。"""
 import json, os, datetime
 
 # 从「当前工作目录」读取 analysis_cards.json、写出 HTML（便于被流水线以 cwd 调用）
@@ -90,7 +90,7 @@ def cell_up(v): return f'<td class="up">{v}</td>' if v is not None else '<td>—
 tot_rows = ''
 for c, n in rows:
     prov, city = c.get('province'), c.get('city')
-    # 产地：省·市；直辖市省=市则只写一个（中性标注，无地域偏好）
+    # 产地：省·市；直辖市省=市则只写一个
     origin = city if prov == city else f'{prov}·{city}'
     rt = c.get('realtime', {})
     pe = c.get('pe_used'); pb = c.get('pb_used'); roe = rt.get('roe')
@@ -244,7 +244,7 @@ html = f'''<!DOCTYPE html>
 <div class="wrap">
 <header class="hero">
   <h1>Graham 防御型入选股 · 四大师分析总结</h1>
-  <div class="meta">生成日 2026-07-22 ｜ 数据源 <b>公开接口（腾讯自选股 + 东方财富）</b>（Wind 未连接，自动回退）｜ 方法论：ai-berkshire 四大师框架（段永平·巴菲特·芒格·李录）｜ 地域仅作产地（省·市）中性标注</div>
+  <div class="meta">生成日 2026-07-22 ｜ 数据源 <b>公开接口（腾讯自选股 + 东方财富）</b>（Wind 未连接，自动回退）｜ 方法论：ai-berkshire 四大师框架（段永平·巴菲特·芒格·李录）</div>
   <div class="badges">
     <span class="badge wind">数据源：公开接口（腾讯/东财）</span>
     <span class="badge">Graham 入选 <b>{len(cards)} 只</b></span>
@@ -254,7 +254,7 @@ html = f'''<!DOCTYPE html>
 </header>
 
 <div class="disclaimer">
-  <b>数据源与口径声明：</b>估值字段（PE/PB/ROE/股息率/52周高低）全部来自<b>公开接口</b>（腾讯自选股 + 东方财富），实时性以接口返回为准；Wind MCP 当前未连接，本报告不依赖 Wind。公开接口 PE/PB 与财报口径偶有差异（如一次性减值致 TTM PE 异常），本报告统一以<b>归一化近3年扣非 PE</b> 作估值基准，规避失真。定性判断（护城河/管理层/文明趋势）为 AI 基于公开信息的框架化推理，<b>非一手调研</b>；三情景为机械估值模型输出，<b>非收益预测，不构成投资建议</b>。颜色遵循 A 股惯例：<span class="up">红=上涨/上行空间</span>、绿=下跌。所有入选股一视同仁，地域仅作产地（省·市）客观标注，不参与任何偏好或剔除。
+  <b>数据源与口径声明：</b>估值字段（PE/PB/ROE/股息率/52周高低）全部来自<b>公开接口</b>（腾讯自选股 + 东方财富），实时性以接口返回为准；Wind MCP 当前未连接，本报告不依赖 Wind。公开接口 PE/PB 与财报口径偶有差异（如一次性减值致 TTM PE 异常），本报告统一以<b>归一化近3年扣非 PE</b> 作估值基准，规避失真。定性判断（护城河/管理层/文明趋势）为 AI 基于公开信息的框架化推理，<b>非一手调研</b>；三情景为机械估值模型输出，<b>非收益预测，不构成投资建议</b>。颜色遵循 A 股惯例：<span class="up">红=上涨/上行空间</span>、绿=下跌。所有入选股一视同仁地按 Graham 七条条件判定。
 </div>
 
 <section>
@@ -285,7 +285,7 @@ html = f'''<!DOCTYPE html>
 
 <div class="foot">
   数据源：公开接口（腾讯自选股 / 东方财富）｜ 筛选：Graham 防御型 7 条件（10年窗口 / 中盘 150亿·60亿口径）<br>
-  地域仅作产地（省·市）中性标注，不参与筛选或剔除 ｜ 生成：老登股推荐（自动）<br>
+  生成：老登股推荐（自动）<br>
   ⚠️ 本报告为 AI 框架化推理 + 机械估值，非投资建议；投资有风险，决策需独立判断。
 </div>
 </div>

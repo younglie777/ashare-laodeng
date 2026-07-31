@@ -21,10 +21,10 @@ import json, re, os, datetime, glob, sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'data')
 TOOLS = os.path.join(os.path.dirname(SCRIPT_DIR), 'tools')
-# 注册地省·市解析：仅作中性"产地"标注，绝不作为筛选/剔除条件
-# —— 用户 2026-07-31 明确要求：不引入任何地域偏好或歧视，地域只作客观信息标注。
+# 注册地省·市解析
+# 用户 2026-07-31 要求：按统一条件一视同仁判定
 sys.path.insert(0, TOOLS)
-import location  # 仅解析 province/city（见 tools/location.py，无地域筛选逻辑）
+import location  # 解析 province/city（见 tools/location.py）
 
 # 用法: python graham_westock.py <WIN=10> [codes_file] [raw_dir] [out_suffix] [mv_gate=150] [rev_gate=60]
 WIN = int(sys.argv[1]) if len(sys.argv) > 1 else 10  # 默认10年：Graham原教旨；2026-07-31用户确认回到10年（5年窗口会把盈利增长对比基期前移反而更严，故退回10年）
@@ -130,7 +130,7 @@ def analyze(sym, profiles, quotes, lrb, zcfz, dividends):
     if 'ST' in (R['name'] or '').upper():
         R['fail'].append('ST股')
 
-    # 产地(省·市): 仅作中性标注, 不参与筛选或剔除(避免地域偏好/歧视)
+    # 产地(省·市): 客观信息
     addr = pro.get('regAddress') or pro.get('officeAddress') or ''
     prov, city = location.parse_location(addr)
     R.update(reg_addr=addr, province=prov, city=city)

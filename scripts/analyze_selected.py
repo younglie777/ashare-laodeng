@@ -296,7 +296,7 @@ def main():
     selected = read_selected(selection)
     print(f'Graham 入选 {len(selected)} 只: ' + ', '.join(s["name"] or s["code"] for s in selected))
     cards = [build_card(s) for s in selected]
-    print(f'✅ 入选 {len(cards)} 只（仅按 Graham 条件，地域仅作省·市中性标注）')
+    print(f'✅ 入选 {len(cards)} 只（仅按 Graham 条件）')
 
     # 写 JSON
     json_path = os.path.join(out_dir, 'analysis_cards.json')
