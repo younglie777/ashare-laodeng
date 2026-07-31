@@ -249,11 +249,10 @@ def run_screen(args):
         print(f'❌ raw 数据不全：{raw} 下需有 pro.txt/quo.txt/fin_lrb.txt/fin_zcfz.txt/div.txt')
         print('   先跑 fetch，或按 README 手动抓取。')
         sys.exit(1)
-    region = '0'  # 发布版一律不做地域筛选（全市场一视同仁）
     work = args.out
     os.makedirs(work, exist_ok=True)
     cmd = [PY, GRAHAM, str(args.win), codes, raw, args.suffix or '',
-           str(args.mv), str(args.rev), region]
+           str(args.mv), str(args.rev)]
     rc, out = run(cmd, cwd=work)
     # 从末行 JSON 取 md 名
     md = None

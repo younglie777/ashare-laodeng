@@ -17,10 +17,14 @@
     rev_gate   规模闸门-营收下限(亿)；默认60（用户认为原100亿太苛刻）
 """
 import json, re, os, datetime, glob, sys
-import region_filter  # 地域闸门(北方非省会/前二城市剔除)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'data')
+TOOLS = os.path.join(os.path.dirname(SCRIPT_DIR), 'tools')
+# 注册地省·市解析：仅作中性"产地"标注，绝不作为筛选/剔除条件
+# —— 用户 2026-07-31 明确要求：不引入任何地域偏好或歧视，地域只作客观信息标注。
+sys.path.insert(0, TOOLS)
+import location  # 仅解析 province/city（见 tools/location.py，无地域筛选逻辑）
 
 # 用法: python graham_westock.py <WIN=10> [codes_file] [raw_dir] [out_suffix] [mv_gate=150] [rev_gate=60]
 WIN = int(sys.argv[1]) if len(sys.argv) > 1 else 10  # 默认10年：Graham原教旨；2026-07-31用户确认回到10年（5年窗口会把盈利增长对比基期前移反而更严，故退回10年）
@@ -29,7 +33,6 @@ BASE = sys.argv[3] if len(sys.argv) > 3 else os.path.join(DATA_DIR, 'raw')
 OUT_SUF = sys.argv[4] if len(sys.argv) > 4 else ''
 MV_GATE = float(sys.argv[5]) if len(sys.argv) > 5 else 150.0  # 默认150亿：用户认为原300太苛刻
 REV_GATE = float(sys.argv[6]) if len(sys.argv) > 6 else 60.0  # 默认60亿：用户认为营收>100亿太苛刻
-REGION_ON = (sys.argv[7] != '0') if len(sys.argv) > 7 else True  # 地域闸门开关，默认开
 YEARS = list(range(2026 - WIN, 2026))
 G = 3 if WIN >= 10 else 2
 FIRST3 = list(range(2026 - WIN, 2026 - WIN + G))
@@ -127,13 +130,10 @@ def analyze(sym, profiles, quotes, lrb, zcfz, dividends):
     if 'ST' in (R['name'] or '').upper():
         R['fail'].append('ST股')
 
-    # 条件-1 地域闸门: 北方省份只留省会+全省经济前二城市, 南方全留; 北方入选者打标
+    # 产地(省·市): 仅作中性标注, 不参与筛选或剔除(避免地域偏好/歧视)
     addr = pro.get('regAddress') or pro.get('officeAddress') or ''
-    reg = region_filter.classify(addr)
-    R.update(reg_addr=addr, province=reg['province'], city=reg['city'],
-             region=reg['region'], is_north=reg['is_north'], reg_reason=reg['reason'])
-    if REGION_ON and not reg['keep']:
-        R['fail'].append('北方非省会/前二城市')
+    prov, city = location.parse_location(addr)
+    R.update(reg_addr=addr, province=prov, city=city)
 
     quo = quotes.get(sym, {})
     prev = f(quo.get('prev_close'))
