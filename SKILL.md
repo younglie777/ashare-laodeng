@@ -5,6 +5,30 @@ description: '把 Graham 防御型选股筛出的股票，套用 ai-berkshire �
 
 # 老登股推荐 · Graham 入选股「分析总结」
 
+## 实时信息检索（强制，先于任何财报结论）
+
+> **痛点**：四大师分析若只基于 Graham 筛选出的历史财务数据，会漏掉「正在变坏」的信号——业绩指引下调、解禁/配售/减持、监管调查、竞品突变，这些**先在公开舆论与新闻里显现**，财报滞后半年。财务指标好看的「价值陷阱」往往就是这么来的。
+
+**对每只入选股做四大师分析前，必须先联网检索实时信息**，至少覆盖四类来源：
+
+1. **雪球（Xueqiu）舆情（重点）→ 调用 `xueqiu-comments` skill**：抓取个股讨论、大 V 观点、散户多空分歧、估值争议、解禁/配售/减持等事件情绪。
+   - **首选：调用 `xueqiu-comments` skill**——传入股票代码/名称（如 `智谱`、`06651.HK`、`五一视界`），它会用 WebSearch 并行检索雪球公开评论，输出「多空观点对比表 + 综合情绪 + 争议点」。这是本框架做雪球舆情的标准动作。
+   - 备选/补充：`ai-berkshire` 仓库有 `tools/xueqiu_scraper.py` 时（仓库根目录执行）：`python3 tools/xueqiu_scraper.py --keywords {公司名},{股票代码} --output /tmp/xq-{公司名}.md`；无工具时用 WebSearch 检索「雪球 {公司名} {代码}」「{公司名} 股吧 讨论」「{公司名} 目标价 估值 贵/便宜」等。
+2. **财经新闻与官方公告**：WebSearch 检索近 3–6 个月的公司新闻、业绩指引、官方公告（港交所/SEC/巨潮）、监管披露。
+3. **卖方/机构观点**：摩根、高盛、中金、SimplyWallSt 等评级/目标价变动；对比「机构目标价」与「散户情绪」的分歧。
+4. **行业与竞品动态**：技术路线变化、政策、对手进展（AI 赛道尤其重要）。
+
+**信息等级与用法**（遵循 AGENTS.md 交叉验证原则）：
+- **A 级（可进结论）**：官方公告、财报、机构研报、可核实的新闻。财报与新闻冲突时，**以更近的时点为准**。
+- **B 级（仅作反向验证/情绪参考，不进结论）**：雪球/股吧散户观点、自媒体、未证实传言。须标注来源与情绪倾向，**不得作为估值或买卖依据**。
+
+**硬约束**：
+- 对 AI / 半导体 / 机器人 / 创新药 / 高成长未盈利 等高频变化行业，实时检索**不是可选项，是必选项**。
+- 若因无网络/无权限未能检索就下结论，必须在报告显式标注：
+  > ⚠️ 本报告仅基于静态财报/历史资料，未做雪球与实时新闻交叉验证，对高频变化赛道的可靠性下降。
+
+
+
 把 **Graham 防御型选股**（本技能已内置 `scripts/graham_westock.py`，亦可独立用 `ashare-graham-screener`）筛出的防御型股票，按 **ai-berkshire** 的四大师框架做深度分析总结。
 筛选负责「又便宜又稳」，本技能负责「为什么值得 / 值多少 / 风险在哪」。
 
@@ -51,13 +75,22 @@ python3 scripts/analyze_selected.py path/to/xxx.md . --source public       # 强
 Wind MCP 工具只能由 AI 调用（子进程脚本无法直接调），所以「Wind 优先」靠 AI 先把数据落下：
 
 ```text
-对每只入选股，调用：
-  mcp__wind-stock__get_stock_fundamentals → "X（CODE.SH）2025-12-31的PE-TTM、PB、ROE、股息率"
+对每只入选股，调用 Wind MCP 的「个股基本面」工具（集合里实际名字是 mcp__wind-finance__get_stock_fundamentals，
+注意不是 mcp__wind-stock__，旧文档写错过）：
+  mcp__wind-finance__get_stock_fundamentals → "X（CODE.SH）2026-08-03 的 PE-TTM、PB、股息率、ROE"
   （实时价/52周高低由公开接口补充，无需 Wind）
 写入 wind_cache/<code6>.json，归一化字段：
   { "code","name","price":null,"pe","pb","div_yield","roe","source":"wind" }
   # price 留 null → 脚本自动用公开接口实时价补齐
+  # roe 为 null 是常态：Wind 通常不计算「当日」ROE，需指定历史报告期（如 "2025-12-31"）才返回，
+  #   故脚本对 roe=null 不回退、不报错，报告里 ROE 列留空即可
 ```
+> ⚠️ **务必用脚本写缓存，别手敲 JSON**。手敲极易出错：漏 `source` 字段、roe 写成字符串、`price` 误填、文件名前缀没剥（应是 `600511.json` 而非 `sh600511.json`）。统一用 `scripts/write_wind_cache.py`：
+> ```bash
+> python scripts/write_wind_cache.py --code sh600511 --name 国药股份 --pe 10.67 --pb 1.16 --div 2.81 --roe null
+> # 或批量：python scripts/write_wind_cache.py --batch payload.json
+> #   payload.json: [{"code":"sh600511","name":"国药股份","pe":10.67,"pb":1.16,"div":2.81,"roe":null}, ...]
+> ```
 > 实测 Wind 与公开接口的 PE/PB 常有差异（如长春高新：Wind PE 39.4 vs 腾讯 -752 vs 归一化扣非 12.3），报告应双源并列、注明口径，不让单一源误导。
 
 ### 产地标注（省·市，中性、不参与筛选）
@@ -69,7 +102,55 @@ Wind MCP 工具只能由 AI 调用（子进程脚本无法直接调），所以�
 - `tools/ashare_data.py`（腾讯行情+东方财富，零依赖；已修 curl 路径）— 公开接口兜底源
 - `tools/financial_rigor.py`（精确十进制估值验算/三情景，stdlib）
 - `tools/location.py`（注册地省·市解析，仅标注用，stdlib）
-- **Wind MCP**（环境连接器 `mcp__wind-stock` 等）— 优先数据源，断连时自动回退
+- **Wind MCP**（环境连接器 `mcp__wind-finance` 系列，如 `mcp__wind-finance__get_stock_fundamentals`）— 优先数据源，断连时自动回退
+
+## 环境坑与避坑（踩坑沉淀 · 必读）
+
+> 这套流水线在 Windows + Git-Bash 上跑过，以下坑都实打实踩过。任何一步报错先回来这里对照。
+
+### 坑 0 · wind_cache 是「AI 手动快照」，每次重跑前必须刷新
+
+- `analyze_selected.py` **不会**自动调 Wind，它只读 `wind_cache/<code>.json`（由 AI 经 Wind MCP 预拉取后写入）。
+- 旧缓存（比如昨天 7-22 的 PE）会和**今日实时价**混搭，直接污染 Graham 红线判定（PE×PB 闸门、PB≤1.5）。
+- **规则**：每次重跑前，先对当前入选股用 Wind MCP 重新拉一遍、用 `write_wind_cache.py` 重写；不要复用历史 JSON。
+- 脚本已加护栏：`analyze_selected.py` 一旦命中 wind_cache 会打印 `⚠️ 采用 wind_cache/...（请确保该缓存为本次最新拉取）`，看到就确认是不是今天的。
+
+### 坑 1 · `python3` 是 Windows 应用商店的「假桩」，会静默退出
+
+- Git-Bash 里裸 `python3` 经常指向 `WindowsApps\python.exe` 桩程序，运行后**退出码 9009/49、无任何输出**，极难排查。
+- **解决**：用 hermes 自带的 venv python 绝对路径：
+  `C:/Users/a2821/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe`
+  （也可 `where.exe python` 确认系统真身；用户终端 `python` 解析为 3.11.15，但助手 shell 里 managed 3.13 在前，保险起见直接用上面绝对路径）。
+- 跑本技能脚本统一用：`PY="C:/Users/a2821/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe" && $PY scripts/analyze_selected.py ...`
+
+### 坑 2 · Git-Bash 把 `/c/Users/...` 路径改写成 `C:\c\Users\...`
+
+- Git-Bash 默认对含 `/c/` 的路径做 MSYS 路径转换，会把 `/c/Users/a2821/...` 变成 `C:\c\Users\...`，脚本找不到文件。
+- **解决（两条任选/叠加）**：
+  1. 路径一律用**盘符冒号形式** `C:/Users/a2821/...`（不用 `/c/Users/...`）；
+  2. 设环境变量 `MSYS_NO_PATHCONV=1` 关掉自动转换。
+- 例：`MSYS_NO_PATHCONV=1 $PY scripts/gen_report.py`（工作目录用绝对 `C:/...` 路径）。
+
+### 坑 3 · Chrome headless 渲染 PDF 必须用**绝对输出路径**，相对路径报「拒绝访问」
+
+- `chrome --headless --print-to-pdf=report.pdf`（相对路径）在部分 Windows 环境下会失败报 `拒绝访问`，因为输出落点不明确。
+- **解决**：`--print-to-pdf` 给**绝对路径**，并加 `--user-data-dir` 隔离配置、用 `--headless=new`：
+  ```bash
+  chrome --headless=new --no-sandbox --disable-gpu \
+    --user-data-dir=C:/tmp/chrome_wind_profile \
+    --no-pdf-header-footer --virtual-time-budget=15000 \
+    --print-to-pdf="C:/Users/a2821/WorkBuddy/<run_dir>/wind_final.pdf" \
+    "file:///C:/Users/a2821/WorkBuddy/<run_dir>/report.html"
+  ```
+- 输入 HTML 也用 `file:///` + 绝对路径，避免相对解析问题。
+
+### 坑 4 · `gen_report.py` 输出文件名带日期且会变，下游别写死
+
+- 旧版只写 `Graham入选股_四大师分析_YYYYMMDD.html`，并且标题里的「生成日」硬编码 `2026-07-22`、数据源写死「Wind 未连接，自动回退」——导致 finalize/PDF 步骤天天对不上文件名、且报告永远显示「Wind 未连接」。
+- **已修复**：`gen_report.py` 现在
+  1. 按 `analysis_cards.json` 里每只的 `data_source` 字段**动态生成**数据源文案（Wind 实时 / Wind+公开 / 公开接口），不再写死「Wind 未连接」；
+  2. 同时写出带日期文件 **和** 稳定名 `report.html`。
+- **规则**：下游（finalize / PDF 渲染）一律引用 `report.html`（稳定名），不要再去 glob 日期文件名。
 
 ## 四大师分析协议（写报告时逐只执行）
 

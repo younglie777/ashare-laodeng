@@ -295,6 +295,53 @@ html = f'''<!DOCTYPE html>
 ymd = datetime.date.today().strftime('%Y%m%d')
 ymd_dash = datetime.date.today().strftime('%Y-%m-%d')
 html = html.replace('2026-07-22', ymd_dash)  # 标题/生成日跟随当天
-out = os.path.join(BASE, f'Graham入选股_四大师分析_{ymd}.html')
-open(out, 'w', encoding='utf-8').write(html)
-print('written:', out, '| stocks:', len(cards))
+
+# ---- 数据源文案：依据 analyze_selected 写入的 data_source 动态生成（不再写死"Wind 未连接"）----
+# 这样 AI 用 Wind MCP 预拉取并刷新 wind_cache 后，报告会自动显示「Wind 实时」，
+# 而不是永远显示「Wind 未连接，自动回退」。
+_srcs = [c.get('data_source', 'public') for c in cards]
+_has_wind = any('wind' in s for s in _srcs)
+_wind_missing = any(s == 'wind-missing' for s in _srcs)
+if _wind_missing:
+    SRC_LABEL = 'Wind(部分缺失，已回退公开接口) + 公开接口（腾讯自选股+东方财富）'
+    SRC_BADGE = '数据源：Wind(部分缺失) + 公开接口'
+    SRC_DISCLAIM = '估值字段中 PE/PB/股息率/ROE 优先取自 Wind 实时数据（部分标的 Wind 缓存缺失、自动回退公开接口），实时价与 52 周高低由公开接口（腾讯/东财）补充。'
+    PE_PB_TAG = 'Wind/公开'
+    SRC_SHORT = 'Wind+公开'
+elif _has_wind:
+    SRC_LABEL = 'Wind 实时（估值 PE/PB/股息率/ROE）+ 公开接口（实时价/52周）'
+    SRC_BADGE = '数据源：Wind 实时 + 公开接口'
+    SRC_DISCLAIM = f'估值字段中 PE/PB/股息率/ROE 优先取自 Wind 实时数据（{ymd_dash} 收盘），实时价与 52 周高低由公开接口（腾讯/东财）补充，两者口径一致、可审计。'
+    PE_PB_TAG = 'Wind'
+    SRC_SHORT = 'Wind实时'
+else:
+    SRC_LABEL = '公开接口（腾讯自选股 + 东方财富）'
+    SRC_BADGE = '数据源：公开接口（腾讯/东财）'
+    SRC_DISCLAIM = '估值字段（PE/PB/ROE/股息率/52周高低）全部来自公开接口（腾讯自选股 + 东方财富），实时性以接口返回为准。'
+    PE_PB_TAG = '公开'
+    SRC_SHORT = '公开接口'
+
+html = html.replace('数据源 <b>公开接口（腾讯自选股 + 东方财富）</b>（Wind 未连接，自动回退）',
+                    f'数据源 <b>{SRC_LABEL}</b>')
+html = html.replace('<span class="badge wind">数据源：公开接口（腾讯/东财）</span>',
+                    f'<span class="badge wind">{SRC_BADGE}</span>')
+html = html.replace('估值字段（PE/PB/ROE/股息率/52周高低）全部来自<b>公开接口</b>（腾讯自选股 + 东方财富），实时性以接口返回为准；Wind MCP 当前未连接，本报告不依赖 Wind。',
+                    SRC_DISCLAIM)
+html = html.replace('（PE/PB 取公开接口 · 含产地省·市）',
+                    f'（PE/PB 取 {PE_PB_TAG} · 含产地省·市）')
+html = html.replace('* 现价、52周位置、PE/PB/ROE/分红率均来自公开接口（腾讯/东财）实时数据。',
+                    f'* 现价、52周位置来自公开接口（腾讯/东财）实时数据；PE/PB/股息率/ROE 取自 {PE_PB_TAG}（{ymd_dash}）。')
+html = html.replace('数据源：公开接口（腾讯自选股 / 东方财富）｜ 筛选：',
+                    f'数据源：{SRC_LABEL}｜ 筛选：')
+html = html.replace('Graham 入选股 · 四大师分析总结（公开接口 · 含产地省·市标注）',
+                    f'Graham 入选股 · 四大师分析总结（{SRC_SHORT} · 含产地省·市标注）')
+html = html.replace('PE(TTM, 公开)', f'PE(TTM, {PE_PB_TAG})')
+html = html.replace('PB(公开)', f'PB({PE_PB_TAG})')
+html = html.replace('PE(Wind)', f'PE({PE_PB_TAG})').replace('PB(Wind)', f'PB({PE_PB_TAG})')
+
+# 同时写出稳定文件名 report.html（便于下游 finalize / PDF 渲染稳定引用，避免每天日期不同导致文件名漂移）
+out_dated = os.path.join(BASE, f'Graham入选股_四大师分析_{ymd}.html')
+open(out_dated, 'w', encoding='utf-8').write(html)
+out_stable = os.path.join(BASE, 'report.html')
+open(out_stable, 'w', encoding='utf-8').write(html)
+print('written:', out_dated, '| stable:', out_stable, '| stocks:', len(cards))

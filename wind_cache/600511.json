@@ -1,10 +1,10 @@
 {
-  "code": "600511",
+  "code": "sh600511",
   "name": "国药股份",
   "price": null,
-  "pe": 10.786,
-  "pb": 1.2023,
-  "div_yield": 2.7826,
-  "roe": 11.1939,
+  "pe": 10.6734,
+  "pb": 1.1643,
+  "div_yield": 2.811,
+  "roe": null,
   "source": "wind"
 }

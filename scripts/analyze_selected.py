@@ -161,7 +161,7 @@ SOURCE = 'auto'  # 数据源策略: auto(Wind优先/公开兜底) | wind(强制)
 
 
 def load_wind_cache(sym):
-    """读取 Wind MCP 预拉取的归一化数据（由 AI 通过 mcp__wind-stock 写入 wind_cache/<code>.json）。"""
+    """读取 Wind MCP 预拉取的归一化数据（由 AI 通过 mcp__wind-finance 写入 wind_cache/<code>.json）。"""
     p = os.path.join(WIND_CACHE, f'{code6(sym)}.json')
     if os.path.exists(p):
         try:
@@ -180,6 +180,10 @@ def enrich(sym, source='auto'):
     Wind 提供 pe/pb/div_yield/roe；实时价与52周高低由公开接口(腾讯/东财)补充。"""
     wind = load_wind_cache(sym) if source in ('auto', 'wind') else None
     if wind and (wind.get('pe') is not None or wind.get('pb') is not None):
+        # ⚠️ 关键坑：wind_cache 是 AI 经 Wind MCP 预拉取的快照，脚本不会自动刷新。
+        # 若缓存是旧日期（如 7-22）却与今日价混搭，会污染 Graham 红线判定 → 必须每次重跑前刷新。
+        print(f'  ⚠️ {sym}: 采用 wind_cache/{code6(sym)}.json 的 Wind 估值（请确保该缓存为【本次最新】拉取；'
+              f'旧缓存会与今日价混搭、污染 Graham 红线判定）')
         pub = enrich_ashare(sym)  # 公开接口补充实时价 + 52周高低
         enr = {
             'price': wind.get('price') or pub.get('price'),
@@ -193,6 +197,7 @@ def enrich(sym, source='auto'):
         }
         return enr, 'wind+public'
     if source == 'wind':
+        print(f'  ❌ {sym}: --source wind 但 wind_cache/{code6(sym)}.json 缺失 → 标注 wind-missing（请先用 Wind MCP 拉取并写入缓存）')
         return {}, 'wind-missing'
     pub = enrich_ashare(sym)
     return pub, 'public'
