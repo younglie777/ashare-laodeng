@@ -1,9 +1,19 @@
 # 老登股推荐（Graham 防御型 → 四大师分析）
 
+> **当前版本：v2.0.0**（2026-08-05 发布 · 详见 [release-notes-v2.0.0.md](release-notes-v2.0.0.md)）
+
 把 Graham 防御型选股筛出的「又便宜又稳」的股票，套用四大师框架（巴菲特/芒格/段永平/李录）做分析总结，自动产出带产地标注、三情景估值的 HTML 投研报告。
 
 ## 原理
 先用 Graham 七条件选出低估值、高分红、经营稳健的「老登股」，再用四大师框架判断它「为什么值得、值多少、风险在哪」。
+
+## v2.0.0 亮点（相对 v1.0.3）
+- **修复 Graham 分红条根因 bug**：westock 分红接口只回当年、拿不到 10 年分红史 → 改为「两遍筛选 + Wind MCP 分红史」（pass1 跳分红缩窄候选 → Wind 拉幸存者 10 年每股派息 → pass2 带分红复筛）。此前旧流程筛不出完整入选，现全市场 1456 候选 → 24 只入选，可复现。
+- **Wind 估值通路打通**：新增 `scripts/write_wind_cache.py`，用 `get_stock_price_indicators` 批量拉 PE/PB/股息率/52周高低/总股本 → 报告 `data_source=wind+public`，Wind 权威值优先、公开接口兜底。
+- **新增 3 个脚本**：`build_div.py`（Wind 股息 → graham 兼容 div.txt）、`write_wind_cache.py`（Wind 缓存写入，避免手敲 JSON）、`_selftest_gw.py`（16 边界用例回归自测）。
+- **「靠手段才过」警示**：平滑 PE 掩护 / 低基数 EPS 增长才过线的标的，在表格+报告里特殊标注。
+- **四大师解读不再空白**：`gen_report.py` 优先读运行目录 `four_masters.json`，缺解读渲染可见黄框。
+- **防呆修复**：`gen_summary_table.py` 拒绝覆盖输入文件；`graham_westock.py` EPS 增长封顶 999.99 防除零爆炸值。
 
 ## 前置（运行时会自检查，缺什么会提示）
 - 本仓库（Graham 筛选器已内置，克隆这一个即可）
