@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .DS_Store
 laodeng-stock-advisor.zip
+
+# Wind 估值快照（AI 手动拉取、每次重跑前必须刷新，不入库）
+wind_cache/
