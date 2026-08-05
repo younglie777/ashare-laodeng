@@ -16,7 +16,7 @@
 最简：克隆后跟 AI 说「用老登股推荐跑一份今天的防御型选股四大师报告」，AI 会自动跑完出 HTML。
 或命令行：
 ```
-python scripts/run_pipeline.py all --win 10 --mv 150 --rev 60 --out ./out --source public
+python scripts/run_pipeline.py all --win 10 --mv 50 --rev 20 --out ./out --source public
 ```
 只分析已有选股：`python scripts/run_pipeline.py analyze 你的选股.md ./out --source public`
 

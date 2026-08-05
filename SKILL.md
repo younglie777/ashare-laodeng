@@ -64,32 +64,71 @@ python3 scripts/analyze_selected.py path/to/xxx.md . --source public       # 强
 # ③ 拿到 analysis_cards.json 后，由 AI 按「四大师分析协议」撰写报告
 ```
 
-### 数据源优先级：Wind 优先 / 公开接口兜底（不强制）
+### 标准运行流程（两遍法 + Wind 分红 · 推荐）
 
-- **默认 `--source auto`**：脚本先读 `wind_cache/<code6>.json`（由 AI 通过 Wind MCP 预拉取）；命中则用 Wind 的权威 pe/pb/分红率/ROE，实时价与 52 周高低由公开接口（腾讯行情+东方财富）补充；**wind_cache 缺失则整体回退公开接口**——Wind 断连/报错也不阻塞。
+> westock 1.0.4 的 dividend 接口残（见坑 7），Graham 第4条（10年≥6年分红(近3年≥2年) + 近3年分红率≥10%）必须走 Wind。故标准流程是「两遍筛选」：第一遍跳分红先缩窄候选，再用 Wind 拉幸存者分红做第二遍。
+
+```bash
+# 0) 前置：Wind MCP 已连接、Node 可用（脚本自动探测内置 westock 1.0.4）
+# 1) 第一阶段：建池 + 抓 raw + 第一遍初筛（跳分红条）
+MSYS_NO_PATHCONV=1 $PY scripts/run_pipeline.py pass1 --out <工作目录>
+#    → 产出 <工作目录>/codes.txt、raw/{pro,quo,fin_lrb,fin_zcfz}.txt、第一遍 MD
+
+# 2) AI 用 Wind MCP 拉「第一遍幸存者」的 10 年分红（get_stock_events，年度每股派息）
+#    写成 wind_dividends.json（放在 <工作目录> 下）：
+#    {"sh600757":{"name":"长江传媒","dividends":{"2016":0.05,...,"2025":0.41}}, ...}
+#    （缺某年就不写该年 → 第二遍会被判「缺分红年」淘汰）
+
+# 3) 第二阶段：Wind 分红 JSON → div.txt → 第二遍筛选（带分红条）
+MSYS_NO_PATHCONV=1 $PY scripts/run_pipeline.py wind-div --json wind_dividends.json --raw <工作目录>/raw
+#    → 产出最终入选 MD
+
+# 4) 分析 + 报告（估值 Wind 优先）
+MSYS_NO_PATHCONV=1 $PY scripts/run_pipeline.py analyze <最终MD> --source auto
+```
+
+- `run_pipeline.py all` = pass1 + 打印交接口令（Wind 只能由 AI 调，无法脚本内自动跑）。
+- `scripts/build_div.py` 负责把 Wind 分红 JSON 转成 graham 兼容的 `div.txt`（总股本取自 `raw/quo.txt`，`totalCashDiviComRMB = 每股派息 × 总股本`）。
+
+### 数据源优先级：Wind 主 / westock·公开接口 兜底（Wind 是首选，非可选）
+
+> 用户有 Wind API 积分，**优先从 Wind 抓**。Wind 覆盖：估值(PE/PB/股息率/ROE) **+ 实时价/52周高低/股本**（写进 wind_cache 即可直接用）；westock/公开接口仅在 Wind 缺字段时兜底。
+
+- **默认 `--source auto`**：脚本先读 `wind_cache/<code6>.json`（由 AI 通过 Wind MCP 预拉取）；命中则用 Wind 的权威 pe/pb/分红率/ROE，**若缓存还写了 price/h52/h52_low/shares_yi 也一并采用**，仅缺的字段由公开接口（腾讯行情+东方财富）补充；**wind_cache 缺失则整体回退公开接口**——Wind 断连/报错也不阻塞。
 - **`--source wind`**：强制只走 Wind，缓存缺失则该股标注 `wind-missing` 跳过。
 - **`--source public`**：强制走 `tools/ashare_data.py`（腾讯+东财），完全不用 Wind。
+- **筛选阶段（fetch/screen）**：Graham 七条件需多年原始财报，Wind MCP 不擅长稳定吐多年级明细，故仍走 westock；westock 已加固（批量 50/批 + 截断自动减半重试 + 清 `\r`），不再频繁救火。**但 westock 1.0.4 的 `dividend list` 接口残（只回当年、无 10 年分红史），Graham 第4条分红条不能靠它**——必须两遍筛选、分红史改走 Wind MCP `get_stock_events`（详见坑 7 与 `laodeng/run_fresh.py`）。
 
 ### Wind MCP 预拉取（填充 wind_cache，由 AI 执行）
 
-Wind MCP 工具只能由 AI 调用（子进程脚本无法直接调），所以「Wind 优先」靠 AI 先把数据落下：
+Wind MCP 工具只能由 AI 调用（子进程脚本无法直接调），所以「Wind 优先」靠 AI 先把数据落下。**Wind 是首选数据源**：
 
 ```text
-对每只入选股，调用 Wind MCP 的「个股基本面」工具（集合里实际名字是 mcp__wind-finance__get_stock_fundamentals，
-注意不是 mcp__wind-stock__，旧文档写错过）：
-  mcp__wind-finance__get_stock_fundamentals → "X（CODE.SH）2026-08-03 的 PE-TTM、PB、股息率、ROE"
-  （实时价/52周高低由公开接口补充，无需 Wind）
+对每只入选股，调用 Wind MCP 工具预拉取：
+  1) 个股基本面 → mcp__wind-finance__get_stock_fundamentals
+     （注意不是 mcp__wind-stock__，旧文档写错过）：
+     "X（CODE.SH）2026-08-03 的 PE-TTM、PB、股息率、ROE"
+  2) 个股行情 → mcp__wind-finance__get_stock_price_indicators
+     （⚠️ 不是 get_stock_quote——那是分钟级行情，返回不了 52 周高低/总股本）：
+     windcode="600757.SH,000786.SZ,..."（可批量传多只，逗号分隔），
+     indexes="最新成交价,前收盘价,市盈率(TTM),市净率(LF),股息率,52周最高,52周最低,总股本,总市值1,中文简称"
+     （这两项写进 wind_cache 后，下游完全不必再走公开接口）
 写入 wind_cache/<code6>.json，归一化字段：
-  { "code","name","price":null,"pe","pb","div_yield","roe","source":"wind" }
-  # price 留 null → 脚本自动用公开接口实时价补齐
+  { "code","name","price","pe","pb","div_yield","roe","h52","h52_low","shares_yi","source":"wind" }
+  # price/h52/h52_low/shares_yi 由 get_stock_price_indicators 供给；不拉则留 null，脚本自动用公开接口补齐
   # roe 为 null 是常态：Wind 通常不计算「当日」ROE，需指定历史报告期（如 "2025-12-31"）才返回，
   #   故脚本对 roe=null 不回退、不报错，报告里 ROE 列留空即可
 ```
 > ⚠️ **务必用脚本写缓存，别手敲 JSON**。手敲极易出错：漏 `source` 字段、roe 写成字符串、`price` 误填、文件名前缀没剥（应是 `600511.json` 而非 `sh600511.json`）。统一用 `scripts/write_wind_cache.py`：
 > ```bash
-> python scripts/write_wind_cache.py --code sh600511 --name 国药股份 --pe 10.67 --pb 1.16 --div 2.81 --roe null
+> # 估值 + 行情 + 产地一次写全（推荐：Wind 同时供给价/52周/省·市，下游零依赖公开接口）
+> python scripts/write_wind_cache.py --code sh600511 --name 国药股份 \
+>     --pe 10.67 --pb 1.16 --div 2.81 --roe null \
+>     --price 30.15 --h52 34.5 --h52_low 24.1 --shares_yi 7.5 \
+>     --province 北京 --city 北京
 > # 或批量：python scripts/write_wind_cache.py --batch payload.json
-> #   payload.json: [{"code":"sh600511","name":"国药股份","pe":10.67,"pb":1.16,"div":2.81,"roe":null}, ...]
+> #   payload.json: [{"code":"sh600511","name":"国药股份","pe":10.67,"pb":1.16,
+> #                   "div":2.81,"roe":null,"price":30.15,"h52":34.5,"h52_low":24.1,"shares_yi":7.5}, ...]
 > ```
 > 实测 Wind 与公开接口的 PE/PB 常有差异（如长春高新：Wind PE 39.4 vs 腾讯 -752 vs 归一化扣非 12.3），报告应双源并列、注明口径，不让单一源误导。
 
@@ -97,6 +136,7 @@ Wind MCP 工具只能由 AI 调用（子进程脚本无法直接调），所以�
 
 - `analyze_selected.py` 对每只入选股按注册地（westock `profile.regAddress`）解析出 **省·市**，仅作为客观产地信息写入报告，**不参与任何筛选、打分、偏好或剔除**。
 - 解析逻辑在 `tools/location.py` 的 `parse_location(addr)`，只是一个省·市解析器。本技能对所有入选股一视同仁。
+- **兜底**：westock profile 偶发取不到 `regAddress`（曾出现老凤祥显示 `None`）时，脚本回退到 Wind 缓存里的 `province/city`（写 `write_wind_cache.py` 时顺带 `--province/--city` 即可），避免报告出现 `None`。
 
 工具依赖（已随技能附带，Windows-GitBash 适配）：
 - `tools/ashare_data.py`（腾讯行情+东方财富，零依赖；已修 curl 路径）— 公开接口兜底源
@@ -167,6 +207,77 @@ Wind MCP 工具只能由 AI 调用（子进程脚本无法直接调），所以�
   1. 跑之前先确认 Wind 连接器是 **connected**；若显示 disconnected，要么让用户去连接器中心重启用，要么直接 `--source public` 走公开接口（脚本 `auto` 模式也会自动回退），**不要反复重试 MCP 调用**；
   2. 本技能的公开接口 `ashare_data.py` 不依赖任何连接器，断网/断连时最稳，可随时兜底。
 
+### 坑 7 · westock 1.0.4 分红接口残，Graham 分红条必须改走 Wind MCP（8-5 根因修复）
+
+- **现象**：westock 1.0.4 的 `dividend list [--all/--years 12]` 只回当年(2025) 3 行、**没有 10 年分红史**；批次调用（一次传多只）直接坏。Graham 第4条（10年≥6年分红(近3年≥2年) + 近3年平均分红率≥10%）因此永远过不了——这是 fresh 跑不出完整入选的**根因**（旧的 8-3 raw 之所以能筛出 3 只，是因为那份历史 raw 里恰好含旧分红记录）。
+- **定位**：此前"Node 脚本缺失"是 `find_westock()` **路径发现失败**，不是真缺；内置 `westock-data`/`westock-tool` 1.0.4 实际位于 `C:/Users/a2821/AppData/Local/Programs/WorkBuddy/resources/app.asar.unpacked/resources/builtin-skills/`，可直接指定 `DATA_JS`/`TOOL_JS` 绝对路径调用。
+- **修复（两遍筛选 + Wind 分红）**：
+  1. Pass-1：用内置 westock 拉 profile/quote/finance(lrb/zcfz)/filter 做初筛，跑 `graham_westock.py --skip-dividend`（跳过第4条分红判定）；
+  2. 对 Pass-1 幸存者，用 **Wind MCP `get_stock_events`** 拉 10 年分红史（用户捐赠积分；每次只查幸存者、很省）；
+  3. `laodeng/build_div.py` 把 Wind 股息(每股股利 × 总股本)转成 graham 兼容 `div.txt`；
+  4. Pass-2：用完整 `div.txt` 复跑 `graham_westock.py`（带分红条）得最终入选。
+- **现成编排**：`C:/Users/a2821/WorkBuddy/2026-08-05-19-38-09/laodeng/run_fresh.py` 已把上面四步串好，直接 `MSYS_NO_PATHCONV=1 $PY laodeng/run_fresh.py` 即可；估值/口径仍由 Wind MCP 写 `wind_cache/<code>.json`（`get_stock_price_indicators` 取 PB 用「市净率(LF)」）。
+- **最新实测结果（8-5 晚全市场重跑，比 21:00 的 fresh 更完整）**：候选池 1456 只（规模闸门 营收≥20亿 或 市值≥50亿）→ pass1（跳分红）26 幸存 → pass2（带 Wind 分红）**24 只最终入选**。晋控煤业/国联股份在 pass2 因分红年数不足/分红率<10% 被真实剔除。分红率门槛已由 30% 下调至 10%（用户 8-5 定），后续重跑入选数会更多。旧的"761 候选→6 幸存→1 只"记录作废。
+
+## 审计记录与变更日志（2026-08-05）
+
+> 本节沉淀「改动后逻辑审计 + 修掉的真实 bug + 新增的标的标注」，避免每轮改完 skill 后留隐患。每次改完筛选/分析/报告脚本，务必回头跑一遍回归。
+
+### 一、本轮改出的真实 bug（已修复）
+
+| # | 文件 | 现象 | 根因 | 修复 |
+|---|------|------|------|------|
+| 1 | `analyze_selected.py` `three_scenario` 解析 | 24 只的结构化三情景 dict **全空（0/24）**，报告只能靠原文渲染 | 正则按 `([\d.]+)` 取 PE，但 `financial_rigor` 输出 PE 带 `x` 后缀（如 `16x`）、涨跌幅带 `+` 号（如 `+130.4%`），逐行匹配失败 | 改用 `\D*` 容错分隔 + `([\d.]+)x` 取 PE + 末尾 `\+?([\d.]+)%` 容错正负号；**24/24 已填充** |
+| 2 | `graham_westock.py` 扣非 EPS 增长 | 河钢资源 EPS 增长算出 **1354142%**（爆炸值） | 2016–2018 扣非 EPS 基数≈0，`(LAST3−FIRST3)/\|FIRST3\|` 除零放大 | `graham_westock.py` 根因处：展示值封顶 `min(growth, 999.99)`，通过/淘汰判定仍用真实比值（不影响入选）；`analyze_selected.py` 读 MD 处同步封顶，避免旧快照污染 |
+| 3 | `analyze_selected.py` 入口（长春高新） | 旧 `wind_cache/000661.json` 存 PE=39.37（不可能值），会污染 Graham 红线判定 | Wind 缓存是「AI 手动快照」，不会自动刷新（见坑 0） | 删掉损坏/未用的陈旧缓存（000661/002540/600219/601163），重跑后长春高新回退公开接口（TTM PE 为负、PE=None） |
+
+### 二、回归自测（已固化进 skill）
+
+- `scripts/_selftest_gw.py`：16 个边界用例（商誉 24%/26%、规模、5/6 分红年、1缺1非正 vs 2非正、CR 1.4/1.5、PE3 20/21、EPS 增 32/34%、skip 分支），覆盖每条件阈值。**改完 graham 逻辑必须跑：全过才算没改坏。**
+
+### 三、新增「靠手段才过」标注（放宽/平滑口径才过 Graham，需警惕）
+
+> 用户要求：放宽后的口径下"本来不会过、靠手段才过"的标的，必须在**表格 + 报告**里特殊标注。
+
+- **触发逻辑**（`analyze_selected.py` `build_card`）：
+  1. **平滑 PE 掩护**：`近3年扣非PE ≤ 20` 达标，但当前 TTM PE 缺失/为负/远超 30 闸门 → 标「靠3年均值才过 Graham」（典型：长春高新，TTM 亏损 -747，靠3年平滑 PE 12.2 过线）；
+  2. **低基数 EPS 增长**：扣非 EPS 增长 ≥ 300% → 标「条件5靠早期极小基数才过」（典型：捷佳伟创 630%、三维化学 633%、河钢资源 1000%）。
+- **渲染位置**：
+  - `analysis_cards.json` 新增 `soft_pass: [str]` 字段；
+  - `analysis_draft.md` 新增「靠手段才过警示」行；
+  - `gen_report.py`：① hero 顶部 badge「靠手段才过：N 只」；② 总表末列「靠手段警示」（⚠️ 靠手段）；③ 逐只卡片黄色警示框 `.softbox`；
+  - `gen_summary_table.py`（skill 内新脚本）：速览表末列「靠手段警示」。
+    - 用法（**在含 analysis_cards.json 的目录下执行**）：`$PY .../gen_summary_table.py [out_md]`，默认输出 `summary_table.md`；
+    - ⚠️ 防呆（8-5 已加固）：`argv[1]` 是**输出文件**，若误传 `analysis_cards.json`/`analysis_draft.md`/`four_masters.json` 会直接报错退出（曾踩坑：误传导致数据卡被速览表覆盖、JSONDecodeError）。
+- **本轮 24 只结果**：4 只触发 = 长春高新、捷佳伟创、三维化学、河钢资源。
+
+### 四、当前 Graham 7 条件最终口径（2026-08-05 累积）
+
+① 规模 市值≥50亿·营收≥20亿；② 流动比率≥1.5 / 有息负债≤净流动资产 / 商誉/净资产≤25%；③ 10年扣非最多1缺年+1非正年；④ 10年≥6年分红(近3年≥2年)+近3年平均分红率≥10%；⑤ 扣非EPS增长≥1/3；⑥ 近3年均扣非PE≤20；⑦ PB≤1.5 或 PE×PB≤22.5。
+
+### 五、四大师解读大面积空白（已修复 · 必看）
+
+- **现象**：报告里每只股票的「四大师框架解读」几乎全空白（空 `<li>生意本质：</li>`），看着像 skill 坏了。
+- **根因**：`gen_report.py` 的四大师定性只读**硬编码的 `NOTE` 字典**（仅 8 只早期样本：sh600219/sz000661/sh600511/sh600612/sh600420/sh601163/sh600757/sz002540）。全市场跑批筛出 24 只，只有 5 只在 NOTE 里，其余 19 只 `NOTE.get(code, {})` 返回空 → 5 个 bullet 全空。四大师定性本应由 **AI 按协议为本轮入选股撰写**，但旧脚本既不读外部文件、也不提示「待补充」，静默留白。
+- **修复**：
+  1. `gen_report.py` 新增：优先读运行目录下的 `four_masters.json`（**AI 为本轮入选股生成，覆盖全部代码**），回退 NOTE；若某股两者皆空，渲染**可见的「⚠️ 四大师解读待补充」黄框**（不再静默空白）。
+  2. 写报告前，**AI 必须生成 `four_masters.json`** —— 为入选名单里**每一只**写 `biz/moat/risk/mgmt/civ/verdict/vcls`（依据卡片行业+财务+公开认知，按四大师协议写）。置于运行目录（与 `analysis_cards.json` 同目录），`gen_report.py` 自动读取。
+- **模板**：
+  ```json
+  {"sh600757": {"biz":"…","moat":"…","risk":"…","mgmt":"…","civ":"…","verdict":"防御首选/关注","vcls":"p-buy"}}
+  ```
+- **注意**：`four_masters.json` 是**运行期产物**（随入选名单变化），不要塞进 skill 本体；skill 只需保证 `gen_report.py` 会读它 + SKILL.md 写明此步骤。举反例：2026-08-05 全市场 24 只若只靠 NOTE，会 19 只空白。
+
+### 六、8-5 晚全量重跑验证 + 修复清单（本次运行）
+
+- **验证结果（全部跑通）**：候选池 1456 → pass1（跳分红）26 幸存 → pass2（Wind 分红）**24 只入选**（与 21:11 首跑一致，可复现）；`_selftest_gw.py` 16/16 过；数据卡 24/24 生成、三情景全填充、soft_pass 4 只识别正确。
+- **修掉的 bug / 改进**：
+  1. **`gen_summary_table.py` 缺防呆**：`argv[1]` 是输出文件，误传 `analysis_cards.json` 会把它覆盖成速览表（实测踩坑 + JSONDecodeError）。已加 `_PROTECTED` 名单拦截（analysis_cards.json/analysis_draft.md/four_masters.json），误传直接报错退出。**SKILL.md 已补用法说明**。
+  2. **SKILL.md 工具名写错**：行情预拉取写 `mcp__wind-finance__get_stock_quote`（实为分钟级行情，拿不到 52 周/股本），已改为 `get_stock_price_indicators`（indexes 可批量传 24 只，含 最新成交价/市净率(LF)/股息率/52周高低/总股本/总市值1）。
+  3. **SKILL.md 结果记录过时**："761 候选→6 幸存→1 只"已更新为 1456→26→24 只（8-5 晚实测）。
+  4. **Wind 通路首次全量打通**：24/24 入选股 `data_source=wind+public`（首跑全是 public）；价格/52周/股本均用 Wind 值，公开接口仅兜底补缺。
+- **遗留小瑕疵（未改，仅记录）**：`gen_report.py` 的数据源文案写死「实时价与 52 周高低由公开接口补充」，实际 Wind 已供价时此句与事实不符（措辞保守，不影响数据正确性）。可后续按 `wind_cache` 命中情况动态生成文案。
+
 ## 四大师分析协议（写报告时逐只执行）
 
 对每只入选股，按以下 6 模块写，每模块末尾给一句对应大师的「追问」：
@@ -182,7 +293,7 @@ Wind MCP 工具只能由 AI 调用（子进程脚本无法直接调），所以�
 - 财务造假嫌疑（Benford 异常 / 审计非标）
 - 有息负债 > 净流动资产（偿债不安全）
 - 连续多年扣非为负 / 盈利质量差
-- 商誉/净资产 > 20% 且仍在并购扩张
+- 商誉/净资产 > 25% 且仍在并购扩张
 - 大股东高比例质押 / 频繁减持
 - 核心业务遭不可逆技术替代
 - 估值处于 52 周 >90% 高位且故事透支

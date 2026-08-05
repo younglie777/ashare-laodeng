@@ -6,6 +6,8 @@ import json, os, datetime
 # 从「当前工作目录」读取 analysis_cards.json、写出 HTML（便于被流水线以 cwd 调用）
 BASE = os.getcwd()
 cards = json.load(open(os.path.join(BASE, 'analysis_cards.json'), encoding='utf-8'))['cards']
+SOFT_COUNT = sum(1 for c in cards if c.get('soft_pass'))
+RED_COUNT = sum(len(c.get('red_flags') or []) for c in cards)
 
 # 四大师定性笔记（key=code）。数据字段自动从 JSON 取，这里只放定性判断。
 NOTE = {
@@ -31,19 +33,19 @@ NOTE = {
    civ='老龄化用药需求稳增。',
    verdict='建议关注(确定性最高)', vcls='p-buy'),
  'sh600612': dict(
-   biz='黄金珠宝首饰，百年老字号 + 加盟连锁。',
-   moat='百年品牌 + 逾 5000 门店渠道网络；金价上行利好库存价值。',
-   risk='金价高位波动、加盟商管理、消费降级。',
-   mgmt='上海国资委旗下，老字号运营经验成熟。',
-   civ='黄金避险 + 婚庆刚需 + 国潮消费。',
-   verdict='关注', vcls='p-watch'),
+   biz='黄金珠宝首饰，百年老字号 + 加盟连锁（以批发给加盟商为主，直营占比低），县级覆盖率约89%、5000+网点。',
+   moat='百年品牌 + 逾5000家门店渠道网络；国潮高端化（藏宝金、IP联名、代言人丁禹兮）补强，但品牌溢价仍显著弱于老铺黄金（一口价古法金）。',
+   risk='【实时预警·2026-08】金价自高位回落后终端金饰消费观望；2025营收-7.0%、2026Q1营收-21.6%/净利-10.8%，全年净关店483家、2026Q1再关185家（加盟收缩、直营企稳）；亮点：毛利率逆势+3.69pct至12.75%（结构优化），线上GMV+94%。典型低估值困境股，价值陷阱风险在于拐点未至（需金价企稳+中报降幅收窄+关店止血三信号）。前向共识偏负：34家机构2026E EPS 2.96(-11.9%)、2027E 3.18(+7.6%)，与本报告机械三情景(+18%中性)背离，牛市情景需业绩真实回暖。雪球分歧大：看多者指PE10+股息5%+百年永续，看空者指过去利润靠出清低价黄金库存(21吨→5.7吨)、若金价续跌95.7亿存货存减值风险。',
+   mgmt='上海黄浦区国资委旗下，老字号运营成熟；2025派息率约49%（10派13.2元），拟推2026中期分红，B股股息率6%+防守性强。',
+   civ='黄金避险 + 婚庆刚需 + 国潮消费；消费降级与金价高波动压制首饰需求，长期看直营/高端化/IP转型成效。',
+   verdict='关注/小仓（逆周期，等金价企稳+中报信号）', vcls='p-watch'),
  'sh600420': dict(
-   biz='化学药（原料药 + 制剂）制造。',
-   moat='央企背景 + 部分品种批文壁垒，但化药护城河整体偏窄。',
-   risk='化药集采压力、毛利率波动；组内 PE 偏高(14.6)。',
-   mgmt='国药系央企。',
-   civ='仿制药存量竞争，成长弹性有限。',
-   verdict='小仓/观望', vcls='p-watch'),
+   biz='化学药（原料药 + 制剂）制造，国药集团旗下统一化药工业平台（抗感染/心血管/神经/麻精等）。',
+   moat='央企背景 + 部分品种批文/一致性评价壁垒（1478个文号、151个过评）；但化药整体护城河偏窄，同质化内卷、缺乏差异化定价权。',
+   risk='【实时重大预警·2026-08】2026H1归母净利预告2.45-3.05亿（同比-54.6%~-63.5%，腰斩）；2026Q1净利-61.7%；营收已连降4年（2022-2025）；抗生素中间体/原料药受产能过剩+集采+地缘"去China化"三重挤压，板块毛利率由32%降至17%；8/3董事长许继辉退休、总裁刘勇调动双双离任。5/21获伊布替尼胶囊注册证（BTK抑制剂抗肿瘤），但公告称对当期业绩无重大影响——暂缺第二曲线。属典型便宜但还在变坏：Graham历史指标漂亮（PB破净0.85、股息3.45%），前瞻盈利却严重恶化。前向共识：7家机构2026E EPS 0.63(-9.7%)、2027E 0.69(+9.2%)，与本报告机械三情景(+18%中性)背离。雪球偏空：营收四年连降、以价换量难挽颓势。',
+   mgmt='国药系央企，刚经历核心管理层大换血；新总裁王永利具财务管控与产业整合背景，适配降本增效，成效待观察。',
+   civ='仿制药存量竞争、集采常态化；第12批集采5款产品拟中选（以价换量）；创新转型滞后、缺第二增长曲线，周期属性强于成长。',
+   verdict='观望/小仓（等H1落地+管理层企稳）', vcls='p-watch'),
  'sh601163': dict(
    biz='轮胎制造（全钢/半钢），出口为主。',
    moat='自主品牌 + 海外渠道；但轮胎同质化、面临贸易摩擦。',
@@ -52,12 +54,12 @@ NOTE = {
    civ='国产轮胎全球份额提升。',
    verdict='关注', vcls='p-watch'),
  'sh600757': dict(
-   biz='教材教辅出版发行 + 一般图书（湖北区域）。',
-   moat='湖北省教材发行独家资质（区域垄断）+ 自有版权。',
-   risk='出生率下行影响教材量、纸价波动；但刚需防御属性强。',
-   mgmt='湖北国资，经营稳健。',
-   civ='教育刚需 + 国企高分红政策。',
-   verdict='防御首选/关注', vcls='p-buy'),
+   biz='教材教辅出版发行 + 一般图书（湖北国资，教材教辅收入占比约75%）。',
+   moat='湖北省教材发行独家资质（区域牌照垄断）+ 自有版权；现金流稳、账上类现金资产逾80亿，分红能力/意愿强。',
+   risk='【实时·2026-08】2026Q1营收-15.4%、净利-16.4%，但经营现金流+124.9%；7/20上半年经营分析会承认"经营指标完成进度低于预期、主业增长动能不足"；出生人口下滑+双减+数字化/AI冲击纸质阅读；应收票据及账款+22.9%至约23.3亿、周转放缓。三者中基本面最稳，区域刚需防御属性强。前向共识偏谨慎，机械三情景(+18%中性)高于短期实际(Q1 -16%)，牛市情景需主业企稳。雪球偏多：红利低波、高分红防御、区域垄断教材教辅。',
+   mgmt='湖北国资（长江出版集团持股约56%），经营稳健；2025年10派4.1元、派息率47%+，连续多年高分红，2026H1经营会强调"稳增长、优分红"；前十大含华泰柏瑞红利低波ETF(4.65%)、汇金(2.4%)等配置型资金。',
+   civ='教育刚需 + 国企高分红政策；数字出版/新媒体电商（2025电商码洋20亿、+21%）为转型方向，但传统出版天花板有限、人口结构长期压制。',
+   verdict='防御首选/关注（高股息压舱石）', vcls='p-buy'),
  'sz002540': dict(
    biz='精密铝管/铝型材（汽车热管理 + 工业）。',
    moat='汽车精密铝材细分龙头、客户认证壁垒；但规模较小。',
@@ -66,6 +68,21 @@ NOTE = {
    civ='新能源车热管理用铝增长。',
    verdict='小盘轻仓', vcls='p-watch'),
 }
+
+# 运行期四大师解读：优先读 four_masters.json（AI 按「四大师分析协议」为本轮入选股生成，覆盖全部代码），
+# 回退 NOTE（旧硬编码，仅 8 只早期样本）。若两者皆空，gen_report 会渲染「⚠️ 四大师解读待补充」黄框，
+# 而不是静默留空白 bullet（旧行为会导致大片空白、看似 skill 出错）。
+_FM_PATH = os.path.join(BASE, 'four_masters.json')
+four_masters = {}
+if os.path.exists(_FM_PATH):
+    try:
+        four_masters = json.load(open(_FM_PATH, encoding='utf-8'))
+    except Exception:
+        four_masters = {}
+
+
+def get_note(code):
+    return four_masters.get(code) or NOTE.get(code) or {}
 
 def scen(c):
     t = c.get('three_scenario_text', '')
@@ -81,7 +98,7 @@ def scen(c):
 
 rows = []
 for c in cards:
-    n = NOTE.get(c['code'], {})
+    n = get_note(c['code'])
     rows.append((c, n))
 
 # ---- 组装 HTML ----
@@ -112,6 +129,7 @@ for c, n in rows:
       <td>{c.get('div_rate')}%</td>
       <td>{space}</td>
       <td><span class="pill {vcls}">{verdict}</span></td>
+      <td>{('<span class="soft">⚠️ 靠手段</span>') if c.get('soft_pass') else '—'}</td>
     </tr>'''
 
 # 逐只卡片
@@ -123,6 +141,19 @@ for c, n in rows:
     pos = c.get('pos_in_52w')
     red = c.get('red_flags') or []
     red_html = '；'.join(red) if red else '无明显红线'
+    # 靠手段才过警示框（放宽/平滑口径才过 Graham）
+    soft_list = c.get('soft_pass') or []
+    softbox_html = ''.join(
+        f'<div class="softbox">⚠️ <b>靠手段才过（需警惕）</b>：{s}</div>' for s in soft_list
+    ) if soft_list else ''
+    # 四大师定性：优先 four_masters.json（AI 为本轮入选股撰写），回退 NOTE；皆空则渲染可见黄框，杜绝静默空白
+    _fm = [n.get('biz', ''), n.get('moat', ''), n.get('risk', ''), n.get('mgmt', ''), n.get('civ', '')]
+    if any(_fm):
+        _qs = [('生意本质', _fm[0]), ('护城河（巴菲特/芒格）', _fm[1]), ('逆向风险（段永平）', _fm[2]),
+               ('管理层（巴菲特）', _fm[3]), ('文明趋势（李录）', _fm[4])]
+        fm_html = '<ul>' + ''.join(f'<li><span class="q">{q}</span>：{t}</li>' for q, t in _qs) + '</ul>'
+    else:
+        fm_html = '<div class="softbox">⚠️ <b>四大师解读待补充</b>：本轮未生成该股票的定性笔记（AI 未写 four_masters.json）。</div>'
     src = c.get('data_source')
     # 三情景表
     scen_tbl = ''
@@ -152,6 +183,7 @@ for c, n in rows:
             <div class="row"><span>近3年扣非PE / 分红率</span><span>{c.get('pe3kf_used')} / {c.get('div_rate')}%</span></div>
           </div>
           <p style="font-size:11.8px;color:var(--sub);margin:8px 0 0">红线速查：{red_html}</p>
+          {softbox_html}
         </div>
         <div>
           <h3 style="margin-top:0">三情景估值（精确十进制）</h3>
@@ -163,12 +195,8 @@ for c, n in rows:
         </div>
       </div>
       <h3>四大师框架解读（产地：{loc}）</h3>
+      {fm_html}
       <ul>
-        <li><span class="q">生意本质</span>：{n.get('biz','')}</li>
-        <li><span class="q">护城河（巴菲特/芒格）</span>：{n.get('moat','')}</li>
-        <li><span class="q">逆向风险（段永平）</span>：{n.get('risk','')}</li>
-        <li><span class="q">管理层（巴菲特）</span>：{n.get('mgmt','')}</li>
-        <li><span class="q">文明趋势（李录）</span>：{n.get('civ','')}</li>
         <li><span class="q">估值安全边际</span>：{("PB %.2f、处52周 %.1f%% 低位"%(pb,pos)) if pb and pos is not None else "见上表"}，中性目标空间 {("+%.1f%%"%scen(c)) if scen(c) is not None else "—"}。</li>
       </ul>
       <p style="text-align:right;margin:6px 0 0"><span class="pill {n.get('vcls','p-watch')}">综合：{n.get('verdict','—')}</span></p>
@@ -208,6 +236,9 @@ html = f'''<!DOCTYPE html>
   .badges{{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}}
   .badge{{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);padding:4px 11px;border-radius:999px;font-size:12px}}
   .badge.wind{{background:#1f6feb;color:#fff;border-color:#1f6feb}}
+  .badge.warn{{background:#fff6e0;color:#b8860b;border:1px solid #f0dca0}}
+  .soft{{color:var(--warn);font-weight:600}}
+  .softbox{{font-size:11.8px;color:#8a6500;background:#fff6e0;border:1px solid #f0dca0;border-radius:6px;padding:6px 9px;margin:8px 0 0}}
   .disclaimer{{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:8px;padding:12px 16px;margin:14px 0;font-size:12.8px;color:var(--sub)}}
   section{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-bottom:18px}}
   h2{{font-size:17px;margin:0 0 14px;padding-bottom:8px;border-bottom:2px solid var(--navy);display:flex;align-items:center;gap:8px}}
@@ -248,13 +279,14 @@ html = f'''<!DOCTYPE html>
   <div class="badges">
     <span class="badge wind">数据源：公开接口（腾讯/东财）</span>
     <span class="badge">Graham 入选 <b>{len(cards)} 只</b></span>
-    <span class="badge">硬红线触发：0 条</span>
-    <span class="badge">信息丰富度评级：B</span>
+    <span class="badge warn">靠手段才过：{SOFT_COUNT} 只（需警惕）</span>
+    <span class="badge">硬红线触发：{RED_COUNT} 条</span>
+    <span class="badge">信息丰富度评级：A</span>
   </div>
 </header>
 
 <div class="disclaimer">
-  <b>数据源与口径声明：</b>估值字段（PE/PB/ROE/股息率/52周高低）全部来自<b>公开接口</b>（腾讯自选股 + 东方财富），实时性以接口返回为准；Wind MCP 当前未连接，本报告不依赖 Wind。公开接口 PE/PB 与财报口径偶有差异（如一次性减值致 TTM PE 异常），本报告统一以<b>归一化近3年扣非 PE</b> 作估值基准，规避失真。定性判断（护城河/管理层/文明趋势）为 AI 基于公开信息的框架化推理，<b>非一手调研</b>；三情景为机械估值模型输出，<b>非收益预测，不构成投资建议</b>。颜色遵循 A 股惯例：<span class="up">红=上涨/上行空间</span>、绿=下跌。所有入选股一视同仁地按 Graham 七条条件判定。
+  <b>数据源与口径声明：</b>估值字段（PE/PB/ROE/股息率/52周高低）全部来自<b>公开接口</b>（腾讯自选股 + 东方财富），实时性以接口返回为准；Wind MCP 当前未连接，本报告不依赖 Wind。公开接口 PE/PB 与财报口径偶有差异（如一次性减值致 TTM PE 异常），本报告统一以<b>归一化近3年扣非 PE</b> 作估值基准，规避失真。定性判断（护城河/管理层/文明趋势）为 AI 基于公开信息的框架化推理，<b>非一手调研</b>；三情景为机械估值模型输出，<b>非收益预测，不构成投资建议</b>。颜色遵循 A 股惯例：<span class="up">红=上涨/上行空间</span>、绿=下跌。所有入选股一视同仁地按 Graham 七条条件判定。报告中以 ⚠️「靠手段才过」标注的标的，系在<b>放宽/平滑口径</b>下才达 Graham 标准（典型如：当前 TTM PE 因亏损/一次性减值而缺失或为负，靠近3年平滑扣非 PE 才过线；或扣非 EPS 增长靠早期极小基数才过条件5），并非干净通过，须额外警惕其近端基本面是否已恶化。
 </div>
 
 <section>
@@ -262,7 +294,7 @@ html = f'''<!DOCTYPE html>
   <table>
     <thead><tr>
       <th>标的</th><th>产地（省·市）</th><th>行业</th><th>现价*</th><th>PE(Wind)</th><th>PB(Wind)</th><th>ROE</th>
-      <th>52周位置*</th><th>近3年扣非PE</th><th>3年分红率</th><th>中性目标/空间</th><th>综合建议</th>
+      <th>52周位置*</th><th>近3年扣非PE</th><th>3年分红率</th><th>中性目标/空间</th><th>综合建议</th><th>靠手段警示</th>
     </tr></thead>
     <tbody>{tot_rows}</tbody>
   </table>
@@ -284,7 +316,7 @@ html = f'''<!DOCTYPE html>
 </section>
 
 <div class="foot">
-  数据源：公开接口（腾讯自选股 / 东方财富）｜ 筛选：Graham 防御型 7 条件（10年窗口 / 中盘 150亿·60亿口径）<br>
+  数据源：公开接口（腾讯自选股 / 东方财富）｜ 筛选：Graham 防御型 7 条件（10年窗口 / 中盘 50亿·20亿口径）<br>
   生成：老登股推荐（自动）<br>
   ⚠️ 本报告为 AI 框架化推理 + 机械估值，非投资建议；投资有风险，决策需独立判断。
 </div>

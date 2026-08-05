@@ -4,7 +4,8 @@
 
 读取 Graham 选股 Markdown 中间产物的「入选」股票，为每只补全：
   1. westock 已算好的 Graham 七条件指标（PE/PB/近3年扣非PE/分红率/扣非EPS增长/市值/营收）
-  2. ai-berkshire tools/ashare_data.py 实时行情 + 52周高低 + 推算总股本
+  2. 实时行情 + 52周高低 + 总股本：【优先 Wind】(wind_cache 含 price/h52/h52_low/shares_yi 时直接用)，
+     ai-berkshire tools/ashare_data.py（腾讯行情+东财52周）仅兜底缺失字段
   3. ai-berkshire tools/financial_rigor.py 三情景估值（精确十进制）
 产出 analysis_cards.json（供 AI 撰写四大师分析叙事）+ analysis_draft.md（数据卡草稿）。
 
@@ -118,6 +119,8 @@ def read_selected(md_path):
         passed = (g('是否入选') or '').strip()
         if passed not in ('✓', 'True', 'TRUE', '1'):
             continue
+        # 防御性封顶：MD 中扣非EPS增长可能因早期基数极小而爆炸（如 1354142%），与 graham 根因修复保持一致，仅封展示值
+        _eg = num(g('扣非EPS增长(%)'))
         out.append({
             'code': str(g('代码') or '').strip(),
             'name': str(g('名称') or '').strip(),
@@ -129,7 +132,7 @@ def read_selected(md_path):
             'pb': num(g('PB')),
             'pe3_kf': num(g('近3年扣非PE')),
             'div_rate': num(g('近3平均分红率(%)')),
-            'eps_growth': num(g('扣非EPS增长(%)')),
+            'eps_growth': round(min(_eg, 999.99), 2) if _eg is not None else None,
         })
     return out
 
@@ -173,27 +176,28 @@ def load_wind_cache(sym):
 
 def enrich(sym, source='auto'):
     """数据源策略（Wind 优先，公开接口兜底，不强制）：
-      auto  : 优先读 wind_cache/<code>.json（Wind 权威财务/估值 pe/pb/div_yield/roe）；
-              缺失则整体回退 ashare_data（腾讯行情+东财52周）；
+      auto  : 优先读 wind_cache/<code>.json（Wind 权威财务/估值 pe/pb/div_yield/roe +
+              实时价/52周高低/股本，凡 Wind 写进缓存的字段都优先用）；
+              缺失字段由 ashare_data（腾讯行情+东财52周）兜底；
       wind  : 强制 Wind，缓存缺失则返回空并标注 wind-missing；
       public: 强制公开接口。
-    Wind 提供 pe/pb/div_yield/roe；实时价与52周高低由公开接口(腾讯/东财)补充。"""
+    Wind 覆盖：估值 + 实时价 + 52周高低 + 股本；公开接口仅在 Wind 缺这些字段时补。"""
     wind = load_wind_cache(sym) if source in ('auto', 'wind') else None
     if wind and (wind.get('pe') is not None or wind.get('pb') is not None):
         # ⚠️ 关键坑：wind_cache 是 AI 经 Wind MCP 预拉取的快照，脚本不会自动刷新。
         # 若缓存是旧日期（如 7-22）却与今日价混搭，会污染 Graham 红线判定 → 必须每次重跑前刷新。
         print(f'  ⚠️ {sym}: 采用 wind_cache/{code6(sym)}.json 的 Wind 估值（请确保该缓存为【本次最新】拉取；'
               f'旧缓存会与今日价混搭、污染 Graham 红线判定）')
-        pub = enrich_ashare(sym)  # 公开接口补充实时价 + 52周高低
+        pub = enrich_ashare(sym)  # 公开接口兜底：仅补 Wind 缺失的实时价/52周/股本
         enr = {
             'price': wind.get('price') or pub.get('price'),
             'pe': wind.get('pe') or pub.get('pe'),
             'pb': wind.get('pb') or pub.get('pb'),
             'div_yield': wind.get('div_yield'),
             'roe': wind.get('roe'),
-            'h52': pub.get('h52'),
-            'h52_low': pub.get('h52_low'),
-            'shares_yi': pub.get('shares_yi'),
+            'h52': wind.get('h52') or pub.get('h52'),
+            'h52_low': wind.get('h52_low') or pub.get('h52_low'),
+            'shares_yi': wind.get('shares_yi') or pub.get('shares_yi'),
         }
         return enr, 'wind+public'
     if source == 'wind':
@@ -227,11 +231,15 @@ def three_scenario(price, base_pe, eps_growth_pct):
     except Exception as e:
         return f'(三情景估算失败: {e})', {}
     targets = {}
+    # financial_rigor 输出格式示例： "  乐观 (Bull)   26%   16x   2.10   34.5  +130.4%"
+    # 坑：目标PE带 'x' 后缀（如 16x）、涨跌幅带 '+' 号（如 +130.4%）→ 原正则 [\d.]+ 无法匹配，结构化 dict 永远为空。
+    # 用 \D* 跨过中文字/括号/空格/正负号，再抓数字，最稳妥。
     for line in txt.splitlines():
-        m = re.search(r'(乐观|中性|悲观).*?([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)%', line)
+        m = re.search(r'(乐观|中性|悲观)\D*([\d.]+)%\D*([\d.]+)x\D*([\d.]+)\D*([\d.]+)\D*[-+]?([\d.]+)%', line)
         if m:
             targets[m.group(1)] = {'growth': float(m.group(2)), 'pe': float(m.group(3)),
-                                   'eps': float(m.group(4)), 'target_price': float(m.group(5).replace(',', ''))}
+                                   'eps': float(m.group(4)), 'target_price': float(m.group(5)),
+                                   'upside_pct': float(m.group(6))}
     return txt, targets
 
 
@@ -244,6 +252,12 @@ def build_card(stk):
     # 注册地省·市解析（仅作中性产地标注，不参与任何筛选/剔除）
     addr = westock_profile_addr(stk['code'])
     prov, city = location.parse_location(addr)
+    # 兜底：westock profile 偶发取不到 regAddress 时，回退到 Wind 缓存里的省·市
+    if not prov and SOURCE in ('auto', 'wind'):
+        w = load_wind_cache(stk['code'])
+        if w:
+            prov = prov or w.get('province')
+            city = city or w.get('city')
     card['reg_addr'] = addr
     card['province'] = prov
     card['city'] = city
@@ -274,13 +288,27 @@ def build_card(stk):
     red_flags = []
     if pb and pb > 1.5 and pe and pb * pe > 22.5:
         red_flags.append('估值双闸门超 Graham 数(PB>1.5 且 PE×PB>22.5)')
-    if stk.get('div_rate') is not None and stk['div_rate'] < 30:
-        red_flags.append('近3年平均分红率<30%')
+    if stk.get('div_rate') is not None and stk['div_rate'] < 10:
+        red_flags.append('近3年平均分红率<10%')
     if stk.get('eps_growth') is not None and stk['eps_growth'] < 33.3:
         red_flags.append('扣非EPS增长<1/3（防御型门槛）')
     if card.get('pos_in_52w') is not None and card['pos_in_52w'] > 90:
         red_flags.append('股价处于52周高位区(>90%)，安全边际薄')
     card['red_flags'] = red_flags
+
+    # ---- 靠手段才过（放宽/平滑口径才通过 Graham，严格口径本不达标，需警惕）----
+    soft_pass = []
+    pe3 = stk.get('pe3_kf')
+    ttm_pe = enr.get('pe') or stk.get('pe')
+    # 1) 近3年平滑扣非PE达标，但当前TTM PE缺失/为负/远超20闸门 → 靠3年均值掩护才过
+    if pe3 is not None and pe3 <= 20 and (ttm_pe is None or ttm_pe <= 0 or ttm_pe > 30):
+        _pe_desc = ('缺失/为负（盈利异常）' if (ttm_pe is None or ttm_pe <= 0) else f'{ttm_pe:.1f}（远超20闸门）')
+        soft_pass.append(f'近3年平滑扣非PE({pe3:.1f})≤20达标，但当前TTM PE{_pe_desc}，靠3年均值才过Graham')
+    # 2) 扣非EPS增长靠低基数（恢复型高增长，条件5靠早期极小基数才过）
+    eg = stk.get('eps_growth')
+    if eg is not None and eg >= 300:
+        soft_pass.append(f'扣非EPS增长达{eg:.0f}%（低基数恢复型，条件5靠早期极小基数才过）')
+    card['soft_pass'] = soft_pass
     return card
 
 
@@ -328,6 +356,7 @@ def main():
         L.append(f'- 近3年扣非PE: {c.get("pe3_kf")} ｜ 近3平均分红率: {c.get("div_rate")}% ｜ 扣非EPS增长: {c.get("eps_growth")}%')
         L.append(f'- 总股本: {c.get("shares_yi")}亿股')
         L.append(f'- 红线速查: {("；".join(c["red_flags"]) if c["red_flags"] else "无明显红线")}')
+        L.append(f'- 靠手段才过警示: {("；".join(c["soft_pass"]) if c["soft_pass"] else "无")}')
         L.append(f'\n**三情景估值（精确十进制）**\n```\n{c.get("three_scenario_text","").strip()}\n```')
     with open(md_path, 'w', encoding='utf-8') as fh:
         fh.write('\n'.join(L))

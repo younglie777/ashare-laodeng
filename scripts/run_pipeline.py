@@ -6,23 +6,33 @@
 
 子命令
 ------
+  pass1    [--win 10] [--mv 50] [--rev 20] [--out 目录]
+        # 第一阶段：建中盘池 + 抓 raw(westock) + 第一遍初筛（跳分红条）
+  wind-div [--json wind_dividends.json] [--raw raw目录] [--win 10] ...
+        # 第二阶段：Wind 分红 JSON → div.txt → 第二遍筛选（带分红条）
+  fetch    [--rev 20] [--codes 候选.txt] [--raw raw目录] [--limit 8000] [--market hs]
+        # 仅建中盘池 + 抓 raw(westock)：profile/quote/finance；【不含分红，分红走 Wind】
+  screen   [--win 10] [--mv 50] [--rev 20] [--raw raw目录] [--skip-dividend]
+        # 单跑 Graham 筛选（需 raw/*.txt；带 --skip-dividend 可做第一遍）
+  all      [--win 10] [--mv 50] [--rev 20] [--out 目录]
+        # = pass1（建池+抓raw+初筛）；分红需 Wind，跑完会打印交接口令
   analyze  [选股结果MD路径]  [--out 目录] [--source auto|wind|public]
-        # 已有 Graham 选股 MD → 分析 + 报告（无需 westock / 无需 Wind）
-  screen   [--win 10] [--mv 150] [--rev 60] [--codes 候选.txt] [--raw raw目录] [--suffix _150]
-        # 跑 Graham 筛选（需 raw/*.txt 已存在，见 fetch 或 README）
-  fetch    [--rev 60] [--codes 候选.txt] [--raw raw目录] [--limit 8000] [--market hs]
-        # 用 WorkBuddy 内置 westock 自动建中盘池 + 抓取 raw（需 westock 内置 skill + node）
-  all      [--win 10] [--mv 150] [--rev 60] [--out 目录] [--source auto]
-        # fetch + screen + analyze + report 全自动（需 westock；Wind 可选）
+        # 已有 Graham 选股 MD → 分析 + 报告（无需 westock；Wind 可选）
 
-关于 Wind MCP（重点）
----------------------
-  Wind 是【可选】数据源。没有 Wind MCP 也 100% 可用：
-    - 分析阶段默认 --source auto：有 wind_cache/*.json 用 Wind，否则自动回退
-      腾讯行情 + 东方财富（公开接口，零依赖、零配置）。
+标准流程（Graham 分红条依赖 Wind，westock 1.0.4 分红接口残，见 SKILL.md 坑 7）：
+  pass1  →   AI 用 Wind MCP get_stock_events 拉幸存者 10 年分红 → wind_dividends.json
+        →   wind-div  →  analyze <MD> --source auto  → 报告
+
+关于 Wind MCP（重点 · 首选数据源）
+-----------------------------------
+  Wind 是【首选】数据源（你有 API 积分，优先从 Wind 抓）：
+    - 分析阶段默认 --source auto：有 wind_cache/*.json 用 Wind（估值 PE/PB/股息率/ROE
+      + 实时价/52周 均可由 Wind 供给），缺失或 Wind 未连则自动回退 westock/公开接口。
     - 直接 --source public 可强制只用公开接口。
-    - 筛选阶段（fetch/screen）只用 westock 公开接口，跟 Wind 无关。
-  所以「对方没装 Wind MCP」完全不影响使用，啥都不用配。
+    - 筛选阶段（fetch/screen）因 Graham 七条件需要**多年原始财报**（利润表/资产负债表/
+      分红明细），Wind MCP 不擅长稳定吐这堆多年级明细，故仍走 westock；但 westock 已加固
+      （批量 50/批 + 截断自动减半重试 + 清 \r 换行符），不再频繁救火。
+  所以「对方没装 Wind MCP」仍可用（走公开接口兜底），但装了就优先 Wind。
 
 依赖
 ----
@@ -82,6 +92,11 @@ def find_westock():
     home = os.path.expanduser('~')
     builtin_dirs = glob.glob(os.path.join(home, 'AppData', 'Local', 'Programs',
                                 'WorkBuddy', '**', 'builtin-skills'), recursive=True)
+    # 直接兜底：asar.unpacked 下的 builtin-skills（实测此路径最稳，避免 glob 漏匹配）
+    asar = os.path.join(home, 'AppData', 'Local', 'Programs', 'WorkBuddy',
+                        'resources', 'app.asar.unpacked', 'resources', 'builtin-skills')
+    if os.path.isdir(asar) and asar not in builtin_dirs:
+        builtin_dirs.append(asar)
     cands_d, cands_t = [], []
     if env_d:
         cands_d.append(env_d)
@@ -198,37 +213,66 @@ def fetch_universe(rev, codes_file, raw_dir, limit, market):
 
     # 2) 抓 raw（分块，避免单次请求过大）
     # codes_first=True 表示 westock-data 要求代码放在 --type/--num 等旗标之前
-    # （finance 子命令的特殊约定；profile/quote/dividend 则代码放最后即可）
+    # （finance 子命令的特殊约定；profile/quote 则代码放最后即可）
+    # 注意：不再抓 dividend —— westock 1.0.4 的 dividend 接口残（批量只回状态行、
+    #   单只只回当年），拿不到 Graham 第4条要的 10 年分红史。分红史改由 Wind MCP
+    #   提供：AI 用 get_stock_events 拉幸存者分红 → wind_dividends.json →
+    #   scripts/build_div.py 生成 div.txt（见 wind-div 子命令）。
     jobs = [
         ('profile', ['profile'], 'pro.txt', False),
         ('quote', ['quote'], 'quo.txt', False),
         ('finance lrb', ['finance', '--type', 'lrb', '--num', '48'], 'fin_lrb.txt', True),
         ('finance zcfz', ['finance', '--type', 'zcfz', '--num', '48'], 'fin_zcfz.txt', True),
-        ('dividend', ['dividend', 'list', '--years', '12'], 'div.txt', False),
     ]
-    # 注意：westock-data 单次调用输出有长度上限，chunk=150 时每批实际只返回
-    # 约 55~70 只的完整数据（batch 状态仍报 success），导致 div/zcfz 大面积缺失、
-    # Graham 筛选全军覆没。实测 chunk<=40 可完整返回。可用环境变量 WESTOCK_CHUNK 覆盖。
-    chunk = int(os.environ.get('WESTOCK_CHUNK', '40'))
+    # westock-data 单次调用输出有长度上限，大 chunk 会静默截断（batch 状态仍报 success，
+    # 导致 div/zcfz 大面积缺失、Graham 筛选全军覆没）。
+    # 默认 50/批；并对每批做覆盖率自检：若返回代码数 < 请求数 90%，自动减半重试该批，
+    # 直到单只或成功。可用环境变量 WESTOCK_CHUNK 覆盖（建议 20~50）。
+    chunk = int(os.environ.get('WESTOCK_CHUNK', '50'))
+
+    def _westock_call(sub, batch, codes_first):
+        if codes_first:
+            cmd = [node, data_js] + sub[:1] + [','.join(batch)] + sub[1:]
+        else:
+            cmd = [node, data_js] + sub + [','.join(batch)]
+        return run(cmd, capture=True, silent=True)
+
+    def _coverage_ok(out, batch):
+        if not (out and out.strip()):
+            return False, 0
+        got = len(set(re.findall(r'\b(?:sh|sz|bj)\d{6}\b', out)) & set(batch))
+        return got >= len(batch) * 0.9, got
+
     for label, sub, fname, codes_first in jobs:
         path = os.path.join(raw_dir, fname)
-        print(f'② 抓 {label} → {fname}（分块 {chunk}/批）...')
+        print(f'② 抓 {label} → {fname}（分块 {chunk}/批，截断自动减半重试）...')
         with open(path, 'w', encoding='utf-8') as fh:
+            bi = 0
             for i in range(0, len(codes), chunk):
-                batch = codes[i:i + chunk]
-                if codes_first:
-                    cmd = [node, data_js] + sub[:1] + [','.join(batch)] + sub[1:]
-                else:
-                    cmd = [node, data_js] + sub + [','.join(batch)]
-                rc, out = run(cmd, capture=True, silent=True)
-                if rc == 0 and out.strip():
-                    fh.write(out + '\n')
-                    # 覆盖度自检：返回文本中出现的代码数若明显少于请求数，提示截断
-                    got = len(set(re.findall(r'\b(?:sh|sz|bj)\d{6}\b', out)) & set(batch))
-                    if got < len(batch) * 0.9:
-                        print(f'   ⚠ 第 {i // chunk + 1} 批疑似截断：请求 {len(batch)} 只，返回 {got} 只（建议调小 WESTOCK_CHUNK）')
-                else:
-                    print(f'   ⚠ 第 {i // chunk + 1} 批失败，跳过')
+                batch = [c for c in codes[i:i + chunk] if c]
+                if not batch:
+                    continue
+                bi += 1
+                rc, out = _westock_call(sub, batch, codes_first)
+                ok, got = _coverage_ok(out, batch)
+                if not ok:
+                    half = max(1, len(batch) // 2)
+                    if half < len(batch):
+                        print(f'   ⚠ 第 {bi} 批疑似截断/失败（请求 {len(batch)} 只，返回 {got} 只）→ 减半重试')
+                        for j in range(0, len(batch), half):
+                            sub_b = batch[j:j + half]
+                            if not sub_b:
+                                continue
+                            rc2, out2 = _westock_call(sub, sub_b, codes_first)
+                            ok2, got2 = _coverage_ok(out2, sub_b)
+                            if ok2:
+                                fh.write(out2 + '\n')
+                            else:
+                                print(f'   ⚠ 第 {bi} 批子批({len(sub_b)}只)仍缺失({got2}/{len(sub_b)})，跳过')
+                        continue
+                    print(f'   ⚠ 第 {bi} 批失败，跳过')
+                    continue
+                fh.write(out + '\n')
         print(f'   ✓ {path}')
     print('✅ fetch 完成。可继续 screen。')
 
@@ -246,13 +290,22 @@ def run_screen(args):
         sys.exit(1)
     if not (os.path.exists(os.path.join(raw, 'pro.txt')) and
             os.path.exists(os.path.join(raw, 'fin_lrb.txt'))):
-        print(f'❌ raw 数据不全：{raw} 下需有 pro.txt/quo.txt/fin_lrb.txt/fin_zcfz.txt/div.txt')
+        print(f'❌ raw 数据不全：{raw} 下需有 pro.txt/quo.txt/fin_lrb.txt/fin_zcfz.txt')
         print('   先跑 fetch，或按 README 手动抓取。')
+        sys.exit(1)
+    skip_div = getattr(args, 'skip_dividend', False)
+    # 第二遍（带分红）必须已有 div.txt（由 Wind 分红经 build_div.py 生成）
+    if not skip_div and not os.path.exists(os.path.join(raw, 'div.txt')):
+        print(f'❌ 第二遍筛选需要 div.txt，但未找到：{os.path.join(raw, "div.txt")}')
+        print('   分红史来自 Wind：AI 先用 Wind MCP get_stock_events 拉幸存者分红 →')
+        print('   wind_dividends.json，再跑 `wind-div`（内部调 build_div.py 生成 div.txt）。')
         sys.exit(1)
     work = args.out
     os.makedirs(work, exist_ok=True)
     cmd = [PY, GRAHAM, str(args.win), codes, raw, args.suffix or '',
            str(args.mv), str(args.rev)]
+    if skip_div:
+        cmd.append('--skip-dividend')
     rc, out = run(cmd, cwd=work)
     # 从末行 JSON 取 md 名
     md = None
@@ -318,20 +371,71 @@ def cmd_fetch(a):
                   a.limit, a.market)
 
 
-def cmd_all(a):
-    if not run_preflight(need_westock=True, source=a.source):
+def cmd_pass1(a):
+    """第一阶段：建中盘池 + 抓 raw + 第一遍初筛（跳过分红条）。"""
+    if not run_preflight(need_westock=True, source='public'):
         sys.exit(1)
-    print('▶ 全自动流水线：fetch → screen → analyze → report')
+    print('▶ 第一阶段：建池 → 抓 raw → 第一遍初筛（跳分红条）')
     work = a.out
     os.makedirs(work, exist_ok=True)
     codes = os.path.join(work, 'codes.txt')
     raw = os.path.join(work, 'raw')
     fetch_universe(a.rev, codes, raw, 8000, 'hs')
     a.codes, a.raw = codes, raw
+    a.skip_dividend = True
     md = run_screen(a)
-    run_analyze(md, work, a.source)
-    run_report(work)
-    print(f'✅ 全流程完成。报告在：{work}')
+    print(f'✅ 第一遍初筛完成：{md}')
+    print('>>> 下一步（必须）：AI 用 Wind MCP get_stock_events 拉幸存者 10 年分红 →')
+    print('    wind_dividends.json，再跑 `wind-div --raw %s`' % raw)
+    print('>>> 然后：python run_pipeline.py analyze %s --source auto' % md)
+
+
+def cmd_wind_div(a):
+    """第二阶段：用 Wind 分红 JSON 生成 div.txt，再跑第二遍筛选（带分红条）。"""
+    raw = a.raw or _default_data('raw')
+    raw_abs = os.path.abspath(raw)
+    # codes.txt 与 raw 同级（pass1 写在 <work>/codes.txt，raw 在 <work>/raw）
+    a.codes = os.path.join(os.path.dirname(raw_abs), 'codes.txt')
+    a.out = os.path.dirname(raw_abs)
+    json_path = a.json
+    if not os.path.exists(json_path):
+        alt = os.path.join(raw, 'wind_dividends.json')
+        if os.path.exists(alt):
+            json_path = alt
+        else:
+            print(f'❌ 未找到 Wind 分红 JSON：{a.json}（也未在 {alt} 找到）')
+            print('   AI 需先用 Wind MCP get_stock_events 拉幸存者年度每股派息，写成 wind_dividends.json。')
+            sys.exit(1)
+    # 1) Wind 分红 JSON → div.txt
+    rc, _ = run([PY, os.path.join(SCRIPT_DIR, 'build_div.py'), json_path, '--raw', raw])
+    if rc != 0:
+        print('❌ build_div.py 生成 div.txt 失败，终止。')
+        sys.exit(1)
+    # 2) 第二遍筛选（带分红条）
+    a.skip_dividend = False
+    md = run_screen(a)
+    print(f'✅ 第二遍筛选（带分红）完成：{md}')
+    print('>>> 然后：python run_pipeline.py analyze %s --source auto' % md)
+
+
+def cmd_all(a):
+    # 因 Graham 第4条（10年分红）依赖 Wind MCP（westock 1.0.4 分红接口残），
+    # 真正的全自动需 AI 介入拉 Wind 分红，故 all = 第一阶段(建池+抓raw+初筛) + 交接口令。
+    if not run_preflight(need_westock=True, source='public'):
+        sys.exit(1)
+    print('▶ 流水线（第一阶段：建池 + 抓 raw + 第一遍初筛）')
+    work = a.out
+    os.makedirs(work, exist_ok=True)
+    codes = os.path.join(work, 'codes.txt')
+    raw = os.path.join(work, 'raw')
+    fetch_universe(a.rev, codes, raw, 8000, 'hs')
+    a.codes, a.raw = codes, raw
+    a.skip_dividend = True
+    md = run_screen(a)
+    print(f'✅ 第一遍初筛完成：{md}')
+    print('>>> 下一步（必须）：AI 用 Wind MCP get_stock_events 拉幸存者 10 年分红 → wind_dividends.json')
+    print('    再跑：python run_pipeline.py wind-div --raw %s' % raw)
+    print('>>> 然后：python run_pipeline.py analyze %s --source auto' % md)
 
 
 def find_md(dirs):
@@ -359,28 +463,47 @@ def build_parser():
 
     ps = sub.add_parser('screen', help='跑 Graham 筛选（需 raw/*.txt）')
     ps.add_argument('--win', type=int, default=10)  # 默认10年：Graham原教旨；2026-07-31用户确认回到10年
-    ps.add_argument('--mv', type=float, default=150.0)
-    ps.add_argument('--rev', type=float, default=60.0)
+    ps.add_argument('--mv', type=float, default=50.0)
+    ps.add_argument('--rev', type=float, default=20.0)
     ps.add_argument('--codes', default=None)
     ps.add_argument('--raw', default=None)
     ps.add_argument('--suffix', default='')
     ps.add_argument('--out', default=os.getcwd())
+    ps.add_argument('--skip-dividend', action='store_true',
+                    help='两遍法第一遍：跳过分红条（先缩窄候选，再补 Wind 分红做第二遍）')
     ps.set_defaults(func=cmd_screen)
 
-    pf = sub.add_parser('fetch', help='用 westock 自动建池+抓 raw（需 westock+node）')
-    pf.add_argument('--rev', type=float, default=60.0)
+    pf = sub.add_parser('fetch', help='用 westock 自动建池+抓 raw（需 westock+node；不含分红，分红走 Wind）')
+    pf.add_argument('--rev', type=float, default=20.0)
     pf.add_argument('--codes', default=None)
     pf.add_argument('--raw', default=None)
     pf.add_argument('--limit', type=int, default=8000)
     pf.add_argument('--market', default='hs')
     pf.set_defaults(func=cmd_fetch)
 
-    pl = sub.add_parser('all', help='全自动（需 westock；Wind 可选）')
+    pp = sub.add_parser('pass1', help='第一阶段：建池+抓raw+第一遍初筛(跳分红)')
+    pp.add_argument('--win', type=int, default=10)
+    pp.add_argument('--mv', type=float, default=50.0)
+    pp.add_argument('--rev', type=float, default=20.0)
+    pp.add_argument('--out', default=os.getcwd())
+    pp.add_argument('--suffix', default='')
+    pp.set_defaults(func=cmd_pass1)
+
+    pw = sub.add_parser('wind-div', help='第二阶段：Wind 分红JSON→div.txt→第二遍筛选(带分红)')
+    pw.add_argument('--json', default='wind_dividends.json', help='Wind 分红 JSON（AI 用 get_stock_events 拉取）')
+    pw.add_argument('--raw', default=None, help='raw 目录（含 quo.txt，写入 div.txt）')
+    pw.add_argument('--win', type=int, default=10)
+    pw.add_argument('--mv', type=float, default=50.0)
+    pw.add_argument('--rev', type=float, default=20.0)
+    pw.add_argument('--suffix', default='')
+    pw.add_argument('--out', default=os.getcwd())
+    pw.set_defaults(func=cmd_wind_div)
+
+    pl = sub.add_parser('all', help='第一阶段全自动（建池+抓raw+初筛）；分红需 Wind，见交接口令')
     pl.add_argument('--win', type=int, default=10)  # 默认10年：Graham原教旨；2026-07-31用户确认回到10年
-    pl.add_argument('--mv', type=float, default=150.0)
-    pl.add_argument('--rev', type=float, default=60.0)
+    pl.add_argument('--mv', type=float, default=50.0)
+    pl.add_argument('--rev', type=float, default=20.0)
     pl.add_argument('--out', default=os.getcwd())
-    pl.add_argument('--source', default='auto', choices=['auto', 'wind', 'public'])
     pl.add_argument('--suffix', default='')
     pl.set_defaults(func=cmd_all)
     return p

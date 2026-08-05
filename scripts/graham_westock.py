@@ -5,18 +5,26 @@
 流程: westock-tool filter 粗筛 -> westock-data 批量拉取(finance/quote/dividend/profile, markdown)
        -> 解析 -> 7条条件精算 -> Markdown(中间产物统一 MD，省 token、易解析)
 数据源: 腾讯自选股(westock) 公开接口；财务=近 WIN 个完整年报（默认10年 2016-2025）。
+       注：本脚本只负责「筛选」（需多年原始财报，故走 westock）；估值 PE/PB/股息率/ROE/实时价/52周
+       在下游 analyze_selected.py 阶段【优先用 Wind】（wind_cache），westock/公开接口仅兜底。
 产出: A股防御型选股_YYYYMMDD_w<WIN><OUT_SUF>.md + JSON 摘要(打印末行)。
 
 用法:
-  python3 graham_westock.py <WIN=10> [codes_file] [raw_dir] [out_suffix] [mv_gate=150] [rev_gate=60]
-    WIN       时间窗口年数（默认10；Graham原教旨：连续10年扣非全正+连续10年分红+10年盈利增长≥1/3；2026-07-31用户确认回到10年）
+  python3 graham_westock.py <WIN=10> [codes_file] [raw_dir] [out_suffix] [mv_gate=50] [rev_gate=20]
+    WIN       时间窗口年数（默认10；2026-08-05 放宽：盈利持续允许10年中1年非正/缺年，分红改为10年≥6年(近3年≥2年)；盈利增长仍≥1/3）
     codes_file 候选代码列表(每行一个 sh/sz 代码)；默认 <skill>/data/codes.txt
     raw_dir    westock-data 拉取的原始 markdown 目录；默认 <skill>/data/raw
     out_suffix 输出文件名后缀（避免覆盖）；默认 ''
-    mv_gate    规模闸门-总市值下限(亿)；默认150（用户认为原300太苛刻）
-    rev_gate   规模闸门-营收下限(亿)；默认60（用户认为原100亿太苛刻）
+    mv_gate    规模闸门-总市值下限(亿)；默认50（2026-08-05 由150下调：原值挡掉太多中小盘）
+    rev_gate   规模闸门-营收下限(亿)；默认20（2026-08-05 由60下调）
 """
 import json, re, os, datetime, glob, sys
+
+# --skip-dividend：两遍法第一遍专用——先按除「连续分红」外的 6 条 Graham 条件缩窄候选，
+# 避免对全市场几千只逐只拉分红（批量分红接口不吐表）。第二遍再对幸存者补分红后终审。
+SKIP_DIV = '--skip-dividend' in sys.argv
+if SKIP_DIV:
+    sys.argv.remove('--skip-dividend')
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'data')
@@ -26,18 +34,26 @@ TOOLS = os.path.join(os.path.dirname(SCRIPT_DIR), 'tools')
 sys.path.insert(0, TOOLS)
 import location  # 解析 province/city（见 tools/location.py）
 
-# 用法: python graham_westock.py <WIN=10> [codes_file] [raw_dir] [out_suffix] [mv_gate=150] [rev_gate=60]
+# 用法: python graham_westock.py <WIN=10> [codes_file] [raw_dir] [out_suffix] [mv_gate=50] [rev_gate=20]
 WIN = int(sys.argv[1]) if len(sys.argv) > 1 else 10  # 默认10年：Graham原教旨；2026-07-31用户确认回到10年（5年窗口会把盈利增长对比基期前移反而更严，故退回10年）
 CODES_FILE = sys.argv[2] if len(sys.argv) > 2 else os.path.join(DATA_DIR, 'codes.txt')
 BASE = sys.argv[3] if len(sys.argv) > 3 else os.path.join(DATA_DIR, 'raw')
 OUT_SUF = sys.argv[4] if len(sys.argv) > 4 else ''
-MV_GATE = float(sys.argv[5]) if len(sys.argv) > 5 else 150.0  # 默认150亿：用户认为原300太苛刻
-REV_GATE = float(sys.argv[6]) if len(sys.argv) > 6 else 60.0  # 默认60亿：用户认为营收>100亿太苛刻
+MV_GATE = float(sys.argv[5]) if len(sys.argv) > 5 else 50.0  # 默认50亿：2026-08-05 由150下调，纳入中小盘
+REV_GATE = float(sys.argv[6]) if len(sys.argv) > 6 else 20.0  # 默认20亿：2026-08-05 由60下调
 YEARS = list(range(2026 - WIN, 2026))
 G = 3 if WIN >= 10 else 2
 FIRST3 = list(range(2026 - WIN, 2026 - WIN + G))
 LAST3 = list(range(2026 - G, 2026))
 RECENT3 = [2023, 2024, 2025]   # 分红率/3年均PE 用固定近3年(不随窗口缩放)
+DIV_RATE_MIN = 10   # 近3年平均分红率下限(%)：2026-08-05 由 30% 下调至 10%（用户非红利风格；重大投资期低分红合理）
+DIV_MIN_YEARS = 6    # 分红：10年中至少分红年数（60%）
+RECENT_DIV_MIN = 2   # 分红：近3年至少分红年数
+KF_MAX_MISS = 1      # 盈利持续：10年最多允许扣非数据缺失年数
+KF_MAX_BAD = 1       # 盈利持续：10年最多允许扣非非正年数（周期低谷/一次性减值）
+PE3_MAX = 20         # 近3年均扣非PE上限：2026-08-05 由 15 放宽至 20
+CR_MIN = 1.5         # 流动比率下限：2026-08-05 由 2.0 放宽至 1.5
+GW_NE_MAX = 0.25      # 商誉/净资产上限：2026-08-05 由 20% 放宽至 25%（用户厌恶高商誉暴雷，但不宜过松）
 FIN_INDUSTRIES = {'银行', '非银金融', '证券', '保险', '多元金融', '证券Ⅱ', '保险Ⅱ', '多元金融Ⅱ'}
 
 
@@ -174,12 +190,12 @@ def analyze(sym, profiles, quotes, lrb, zcfz, dividends):
         R.update(current_ratio=cr, ibd_yi=(ibd / 1e8) if ibd else 0,
                  nca_yi=(nca / 1e8) if nca is not None else None,
                  gw_ne_pct=(gw / ne * 100) if ne else None)
-        if not (cr and cr >= 2):
-            R['fail'].append('流动比率<2')
+        if not (cr and cr >= CR_MIN):
+            R['fail'].append('流动比率<%.1f' % CR_MIN)
         if not (nca is not None and ibd <= nca):
             R['fail'].append('有息负债>净流动资产')
-        if not (ne and gw / ne <= 0.20):
-            R['fail'].append('商誉/净资产>20%')
+        if not (ne and gw / ne <= GW_NE_MAX):
+            R['fail'].append('商誉/净资产>%.0f%%' % (GW_NE_MAX * 100))
     else:
         R['fail'].append('缺资产负债表')
 
@@ -192,12 +208,12 @@ def analyze(sym, profiles, quotes, lrb, zcfz, dividends):
         kf[y] = v
     R['kf_years'] = {y: (round(kf[y] / 1e8, 2) if kf[y] is not None else None) for y in YEARS}
     miss = [y for y in YEARS if kf[y] is None]
-    if miss:
-        R['fail'].append('扣非数据缺年:%s' % ','.join(map(str, miss)))
-    else:
-        bad = [y for y in YEARS if kf[y] <= 0]
-        if bad:
-            R['fail'].append('扣非非正年:%s' % ','.join(map(str, bad)))
+    bad = [y for y in YEARS if kf[y] is not None and kf[y] <= 0]
+    # 放宽（2026-08-05）：允许最多 1 年数据缺失、最多 1 年扣非非正（周期低谷/一次性减值）
+    if len(miss) > KF_MAX_MISS:
+        R['fail'].append('扣非数据缺年>%d:%s' % (KF_MAX_MISS, ','.join(map(str, miss))))
+    if len(bad) > KF_MAX_BAD:
+        R['fail'].append('扣非非正年>%d:%s' % (KF_MAX_BAD, ','.join(map(str, bad))))
 
     # 条件5 扣非EPS增长≥1/3
     eps = {}
@@ -214,19 +230,22 @@ def analyze(sym, profiles, quotes, lrb, zcfz, dividends):
     l3 = [eps[y] for y in LAST3 if eps[y] is not None]
     if len(f3) == G and len(l3) == G:
         fa, la = sum(f3) / G, sum(l3) / G
-        R['eps_growth_pct'] = round((la / fa - 1) * 100, 2) if fa > 0 else None
+        raw_g = (la / fa - 1) * 100 if fa > 0 else None
+        # 防基数极小导致增长%爆炸（如 2016-2018 扣非EPS≈0 的公司，la/fa 会得出上百万%）。
+        # 仅对【展示值】封顶 999.99%，不影响下方条件5 通过判定（仍用真实 la/fa-1 与 1/3 比较）。
+        R['eps_growth_pct'] = round(min(raw_g, 999.99), 2) if raw_g is not None else None
         if not (fa > 0 and la / fa - 1 >= 1 / 3):
             R['fail'].append('扣非EPS增长<1/3')
     else:
         R['fail'].append('扣非EPS数据不全')
 
-    # 条件6 近3年均扣非PE≤15
+    # 条件6 近3年均扣非PE（2026-08-05 上限由15放宽至20）
     kf3 = [kf[y] for y in RECENT3 if kf.get(y) is not None]
     if len(kf3) == 3 and mktcap_yuan and prev:
         avg_kf = sum(kf3) / 3
         R['pe3_kf'] = round(mktcap_yuan / avg_kf, 2) if avg_kf > 0 else None
-        if not (R['pe3_kf'] and R['pe3_kf'] <= 15):
-            R['fail'].append('3年均扣非PE>15')
+        if not (R['pe3_kf'] and R['pe3_kf'] <= PE3_MAX):
+            R['fail'].append('3年均扣非PE>%d' % PE3_MAX)
     else:
         R['fail'].append('3年扣非PE算不全')
 
@@ -235,32 +254,41 @@ def analyze(sym, profiles, quotes, lrb, zcfz, dividends):
     if not ((pb is not None and pb <= 1.5) or (pe is not None and pb is not None and pe * pb <= 22.5)):
         R['fail'].append('PB>1.5且PE*PB>22.5')
 
-    # 条件4 分红
-    div = dividends.get(sym, [])
-    div_year = {}
-    for r in div:
-        red = str(r.get('reportEndDate', ''))
-        if len(red) < 4:
-            continue
-        y = int(red[:4])
-        amt = f(r.get('totalCashDiviComRMB')) or 0
-        if (r.get('dividendType') == '有分红' or r.get('dividendFlag') == '是' or amt > 0):
-            div_year[y] = div_year.get(y, 0) + amt
-    R['div_years'] = sorted(y for y in div_year if div_year[y] > 0)
-    nodiv = [y for y in YEARS if div_year.get(y, 0) <= 0]
-    if nodiv:
-        R['fail'].append('缺分红年:%s' % ','.join(map(str, nodiv)))
-    rates = []
-    for y in RECENT3:
-        np_ = f(lrb_a[y].get('NPParentCompanyOwners')) if y in lrb_a else None
-        if np_ and np_ > 0 and div_year.get(y):
-            rates.append(div_year[y] / np_ * 100)
-    if len(rates) == 3:
-        R['div_rate_avg3'] = round(sum(rates) / 3, 2)
-        if R['div_rate_avg3'] < 30:
-            R['fail'].append('近3年平均分红率<30%')
+    # 条件4 分红（2026-08-05 放宽：10年≥6年分红、且近3年≥2年；仍保留分红率≥DIV_RATE_MIN%）
+    if SKIP_DIV:
+        # 两遍法第一遍：暂不以分红淘汰，避免对全市场逐只拉分红
+        R['div_years'] = list(YEARS)
     else:
-        R['fail'].append('近3年分红率算不全')
+        div = dividends.get(sym, [])
+        div_year = {}
+        for r in div:
+            red = str(r.get('reportEndDate', ''))
+            if len(red) < 4:
+                continue
+            y = int(red[:4])
+            amt = f(r.get('totalCashDiviComRMB')) or 0
+            if (r.get('dividendType') == '有分红' or r.get('dividendFlag') == '是' or amt > 0):
+                div_year[y] = div_year.get(y, 0) + amt
+        div_years_list = sorted(y for y in div_year if div_year[y] > 0)
+        R['div_years'] = div_years_list
+        # 新规则：10年中至少 DIV_MIN_YEARS 年分红(60%)，且近3年至少 RECENT_DIV_MIN 年分红
+        if len(div_years_list) < DIV_MIN_YEARS:
+            R['fail'].append('分红年数<%d(实%d)' % (DIV_MIN_YEARS, len(div_years_list)))
+        recent_div = [y for y in div_years_list if y in RECENT3]
+        if len(recent_div) < RECENT_DIV_MIN:
+            R['fail'].append('近3年分红年数<%d' % RECENT_DIV_MIN)
+        # 近3年平均分红率（未分红年按0%计入，更保守）
+        payout_rates = []
+        for y in RECENT3:
+            np_ = f(lrb_a[y].get('NPParentCompanyOwners')) if y in lrb_a else None
+            if np_ and np_ > 0:
+                payout_rates.append(div_year.get(y, 0) / np_ * 100)
+        if len(payout_rates) == 3:
+            R['div_rate_avg3'] = round(sum(payout_rates) / 3, 2)
+            if R['div_rate_avg3'] < DIV_RATE_MIN:
+                R['fail'].append('近3年平均分红率<%d%%' % DIV_RATE_MIN)
+        else:
+            R['fail'].append('近3年分红率算不全')
 
     R['pass'] = not R['fail']
     return R
@@ -275,7 +303,7 @@ def make_md(res, out_path, run_date):
     HEAD = ['代码', '名称', '申万行业', '昨收价(元)', '总市值(亿)', '2025营收(亿)',
             '流动比率', '有息负债(亿)', '净流动资产(亿)', '商誉/净资产(%)',
             'PE(TTM)', 'PB', 'PE×PB', '近3年扣非PE', '近3平均分红率(%)',
-            '扣非EPS增长(%)', f'{WIN}年扣非全正', f'连续{WIN}年分红', '是否入选', '淘汰原因']
+            '扣非EPS增长(%)', f'{WIN}年扣非正年数', f'{WIN}年分红年数', '是否入选', '淘汰原因']
     lines = ['# A股类Graham防御型选股 - 筛选结果', '']
     passed = [r for r in res if r.get('pass')]
     lines += [
@@ -290,14 +318,13 @@ def make_md(res, out_path, run_date):
     yn = lambda b: '✓' if b else '✗'
     for r in res:
         ky = r.get('kf_years', {})
-        ok3 = len(ky) == len(YEARS) and all(v is not None and v > 0 for v in ky.values())
+        pos_kf = sum(1 for v in ky.values() if v is not None and v > 0)
         divy = set(int(x) for x in r.get('div_years', []))
-        okdiv = all(y in divy for y in YEARS)
         cells = [r['code'], r.get('name', ''), r.get('industry', ''), r.get('prev_close'),
                  r.get('mktcap_yi'), r.get('rev2025_yi'), r.get('current_ratio'), r.get('ibd_yi'),
                  r.get('nca_yi'), r.get('gw_ne_pct'), r.get('pe'), r.get('pb'), r.get('pe_pb'),
                  r.get('pe3_kf'), r.get('div_rate_avg3'), r.get('eps_growth_pct'),
-                 yn(ok3), yn(okdiv), yn(r.get('pass')), '；'.join(r.get('fail', [])) or '—']
+                 f'{pos_kf}/{WIN}', f'{len(divy)}/{WIN}', yn(r.get('pass')), '；'.join(r.get('fail', [])) or '—']
         cells = ['' if c is None else c for c in cells]
         lines.append('| ' + ' | '.join(str(c) for c in cells) + ' |')
     lines += ['', '## 入选名单', '']
@@ -325,19 +352,19 @@ def main():
                 quotes[sym] = row
     for table in parse_md_tables(raw['fin_lrb']):
         for row in table:
-            sym = row.get('symbol')
+            sym = row.get('symbol') or row.get('SecuCode')
             d = row.get('_date') or row.get('EndDate')
             if sym and d:
                 lrb.setdefault(sym, {})[d] = row
     for table in parse_md_tables(raw['fin_zcfz']):
         for row in table:
-            sym = row.get('symbol')
+            sym = row.get('symbol') or row.get('SecuCode')
             d = row.get('_date') or row.get('EndDate')
             if sym and d:
                 zcfz.setdefault(sym, {})[d] = row
     dividends = parse_dividends(raw['div'])
 
-    codes = [c.strip() for c in open(CODES_FILE) if c.strip()]
+    codes = [c.strip().replace('\r', '') for c in open(CODES_FILE, encoding='utf-8') if c.strip()]
     res = []
     for sym in codes:
         try:

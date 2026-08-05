@@ -1,10 +1,15 @@
 {
-  "code": "000661",
+  "code": "sz000661",
   "name": "长春高新",
-  "price": null,
-  "pe": 39.3666,
-  "pb": 1.641,
-  "div_yield": 2.7664,
-  "roe": 0.6886,
+  "price": 76.95,
+  "pe": -747.564,
+  "pb": 1.413,
+  "div_yield": 0.2,
+  "roe": null,
+  "h52": 141.483,
+  "h52_low": 61.09,
+  "shares_yi": 4.0794,
+  "province": "吉林",
+  "city": "长春",
   "source": "wind"
 }

@@ -1,10 +1,15 @@
 {
   "code": "sh600757",
   "name": "长江传媒",
-  "price": null,
-  "pe": 10.5312,
-  "pb": 1.0143,
-  "div_yield": 4.9818,
+  "price": 7.95,
+  "pe": 10.173,
+  "pb": 0.98,
+  "div_yield": 5.16,
   "roe": null,
+  "h52": 9.29138,
+  "h52_low": 7.24,
+  "shares_yi": 12.1365,
+  "province": "湖北",
+  "city": "武汉",
   "source": "wind"
 }
