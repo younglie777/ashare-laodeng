@@ -7,6 +7,16 @@
 ## 原理
 先用 Graham 七条件选出低估值、高分红、经营稳健的「老登股」，再用四大师框架判断它「为什么值得、值多少、风险在哪」。
 
+## 效果预览
+
+**入选股横向对比表**（PE/PB 取 Wind、含产地省·市、靠手段警示）：
+
+![入选股横向对比](docs/screenshots/横向对比表.png)
+
+**单只深度分析卡**（基本面 + 三情景估值 + 四大师框架解读）：
+
+![单只深度分析](docs/screenshots/单只深度分析.png)
+
 ## v2.0.0 亮点（相对 v1.0.3）
 - **修复 Graham 分红条根因 bug**：westock 分红接口只回当年、拿不到 10 年分红史 → 改为「两遍筛选 + Wind MCP 分红史」（pass1 跳分红缩窄候选 → Wind 拉幸存者 10 年每股派息 → pass2 带分红复筛）。此前旧流程筛不出完整入选，现全市场 1456 候选 → 24 只入选，可复现。
 - **Wind 估值通路打通**：新增 `scripts/write_wind_cache.py`，用 `get_stock_price_indicators` 批量拉 PE/PB/股息率/52周高低/总股本 → 报告 `data_source=wind+public`，Wind 权威值优先、公开接口兜底。
